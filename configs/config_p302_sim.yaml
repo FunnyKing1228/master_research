@@ -1,0 +1,151 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB zinc-air battery simulation config v7 (TOU arbitrage)
+# Framework: CORAL safety-oriented RL (CRTSN + OCC + Adaptive Loop)
+# ─────────────────────────────────────────────────────────────────
+# v7 updates:
+#   - Uses 2026 Taipower summer TOU rates:
+#     peak 7.13, semi-peak 4.69, off-peak 2.06 TWD/kWh.
+#   - Weekend price is 2.06 TWD all day, so standby is usually preferred.
+#   - Reward is centered on (Baseline_Cost - Agent_Cost) * tou_reward_scale.
+#   - Peak discharge receives a bonus; peak charging receives a penalty.
+#   - Off-peak charging receives a preparation bonus.
+#   - Weekend battery throughput receives a small SoH-protection penalty.
+#   - Removes SoC-centering and action-efficiency shaping to avoid lazy policies.
+#   - Uses four energy-flow scenarios:
+#     1=Battery Solo, 2=Grid Support, 3=Grid Charge, 4=Standby.
+#   - Keeps the v6 hardware-aligned PV-first, grid-import-only energy model.
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"   # auto / cpu / cuda
+
+# --- Environment parameters aligned with the P302 hardware ---
+env:
+  microgrid_id: 0
+  # 276 steps = four deployment days from Mar 17-20 at 15 minutes per step.
+  episode_length: 276
+  time_step: 0.25               # 15 minutes = 0.25 hours
+
+  # SLFB battery specification: 150 mA system current and 12-hour charge/discharge.
+  # Power: 5.5 V x 0.15 A = 0.825 W.
+  # Capacity: 150 mA x 12 h = 1800 mAh = 9.90 Wh.
+  # Cutoff voltage: 4.2 V; discharge is blocked below this voltage.
+  battery_capacity_kwh: 0.00990
+  battery_power_kw: 0.000825
+  battery_efficiency: 0.95       # 5% power loss; no extra sim-to-real noise/lag.
+
+  use_real_data: true
+  # Preprocessed four-day 15-minute deployment CSV from Mar 17-20.
+  dataset_csv_path: "data/processed/training_recent_15min.csv"
+  dataset_pv_join_wind: false
+
+  # CSV column mapping.
+  dataset_time_column: "timestamp"
+
+  # P302 grid is import-only: buy from grid but never export.
+  # PV serves load first; grid covers remaining load and charging.
+  # Battery discharge reduces grid dependence.
+  allow_grid_trading: false
+
+  # No ramp limit; battery power is already very small and no noise/lag is added.
+  ramp_limit_kw: null
+  hard_guard: false
+
+  # --- TOU reward scale ---
+  # The 0.825 W SLFB can only perform small peak shaving.
+  # Max savings/step = 0.000825 kW x 0.25 h x 7.13 TWD = 0.00147 TWD.
+  # 7000 x 0.00147 ~= 10.3, matching the earlier 50 mA scaling.
+  tou_reward_scale: 7000
+
+  # --- Flow-rate electrochemical equivalent model ---
+  # Enable 2D action space: [power_kw, flow_fraction].
+  use_flow_rate_action: true
+  # Baseline internal resistance:
+  # R_base = (V_charge - V_discharge) / (2 x I_rated)
+  #        = (8.5 - 5.5) / (2 x 0.15) = 10.0 ohm.
+  flow_R_base_ohm: 10.0
+  # Max pump parasitic power ~= 15% of discharge power = 0.825 W x 0.15 = 124 mW.
+  flow_P_max_pump_W: 0.124
+  # Resistance growth factor: low flow -> concentration polarization -> higher resistance.
+  flow_k_R: 0.5
+  # Open-circuit voltage assumptions.
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.5
+  # Rated current.
+  flow_I_rated_A: 0.150
+
+  # Vendor-confirmed behavior (2026/03/12):
+  # discharge amount is load-determined; the AI only controls charging.
+  # Negative agent action means "allow discharge"; actual discharge is
+  # min(battery max power, remaining load).
+  discharge_auto: true
+  # Discharge is blocked below the SoC corresponding to cutoff voltage.
+  # V = 4.2 V maps to SoC ~= 0% under the linear approximation:
+  # SoC = (V - 4.2) / (5.5 - 4.2).
+  voltage_cutoff_soc: 0.05
+
+  # Extended observations are disabled until SoH data is reliable enough.
+  use_extended_obs: false
+
+# --- SAC hyperparameters ---
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.05                   # Initial entropy temperature; low for early convergence.
+  target_entropy: -2.0          # Standard value = -action_dim.
+  alpha_lr: 0.0001              # Independent alpha lr, lower than actor lr.
+  hidden_dim: 128               # P302 does not need a large network.
+  buffer_size: 100000
+  batch_size: 256
+  warmup_steps: 2000            # Fill replay buffer with random policy first.
+  update_every: 4               # Update every four steps.
+
+# --- Training settings ---
+training:
+  total_episodes: 2000          # 2000 episodes.
+  max_steps: 276                # Same as episode_length.
+  eval_every: 25                # Evaluate every 25 episodes.
+  eval_episodes: 3              # Average over 3 evaluation episodes.
+  save_every: 100               # Save a checkpoint every 100 episodes.
+
+  # CORAL curriculum:
+  # Phase 1 (EP 0-299): pure SAC learns basic TOU arbitrage.
+  # Phase 2 (EP 300-1999): SAC + CRTSN + OCC + Adaptive Loop.
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 300
+
+  # Evidential hyperparameters used by the sac_sn_evi variant.
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+# --- SafetyNet, enabled in Phase 2 ---
+safetynet:
+  ramp_limit_kw: null           # No ramp limit because battery power is tiny.
+
+# ── Conformal Prediction ────────────────────────────────────────
+conformal:
+  window: 2880                  # Residual window size, about five episodes.
+  delta: 0.1                    # Initial coverage = 1 - delta = 90%.
+
+# --- Reward settings ---
+reward:
+  # Phase 1: these penalties are inactive while SafetyNet is off.
+  # Phase 2: these penalties activate when SafetyNet is on.
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+# --- Stress testing, disabled by default ---
+stress:
+  enable: false
+
+# --- Logging and outputs ---
+logging:
+  log_interval: 10              # Print progress summary every 10 episodes.
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true         # Write one CSV row per episode for live tracking.

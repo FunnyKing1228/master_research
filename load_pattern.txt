@@ -1,0 +1,10 @@
+# Load Pattern for P302 Microgrid (deployment-safe)
+# Format: HH:MM, load_groups (1-4)
+# Each group = ~0.1 W measured, total max = ~0.4 W
+#
+# Temporary deployment setting:
+#   Keep all 4 load groups enabled to make battery discharge observable.
+#
+# Actual: physically keep all four load groups ON.
+#
+00:00, 4

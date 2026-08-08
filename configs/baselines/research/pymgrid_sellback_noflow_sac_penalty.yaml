@@ -1,0 +1,198 @@
+random_seed: 20260629
+device: auto
+thesis_sim:
+  description: pymgrid25 microgrid_4 sell-back scenario (noflow); PV is production
+    potential.
+  output_dir: thesis_sim/outputs/pymgrid25_mg4_sellback_60kw_noflow
+  clean_windows_file: thesis_sim/outputs/clean_windows/<run_id>/clean_windows.csv
+  random_start_hours:
+  - 8
+  - 12
+  - 18
+  random_initial_soc: true
+  multi_day_episode_length: 288
+  scenario:
+    name: pymgrid25_mg4_sellback_60kw
+    role: benchmark-derived grid-export extension
+    source_dataset: pymgrid25 microgrid_4
+    scaled_dataset: data\processed\pymgrid25_mg4_sellback_60kw.csv
+    scaled_dataset_meta: data/processed/thesis_scaled_commercial_60kw_clean_windows_meta.json
+    scaling_rule: Scale Solar and Consumption by the same factor so measured PV/load
+      ratios and timing are preserved.
+    target_peak_load_kw: 60.0
+    resulting_peak_pv_kw: 80.3077363896848
+    bess_power_kw: 60.0
+    bess_capacity_kwh: 240.0
+    bess_duration_h_at_rated_power: 4.0
+    pump_max_power_kw: 4.8
+    pump_max_power_fraction_of_bess_power: 0.08
+    evidence_basis:
+    - DOE commercial reference/prototype buildings define small and medium commercial
+      building archetypes for energy simulation.
+    - Small commercial field demonstrations include approximately 75 kW PV and 64.5
+      kWh / 29 kW storage.
+    - C&I storage sizing commonly uses 2-4 hour batteries for demand-charge and TOU
+      applications.
+    - Vanadium flow-battery auxiliary/pump loads are often around 8-15% of rated system
+      power.
+    market_rule: Grid export allowed; feed-in tariff is a fixed ratio of TOU purchase
+      price.
+  notes:
+  - This scenario is not direct sim-to-real validation of the P302 hardware; it is
+    a physically motivated commercial scale-up.
+  - PV support / grid demand wording still applies; do not describe the system as
+    binary PV-vs-grid switching.
+  - Battery discharge remains solo load supply, not partial assist alongside PV/grid.
+env:
+  microgrid_id: 0
+  episode_length: 24
+  time_step: 1.0
+  battery_capacity_kwh: 240.0
+  battery_power_kw: 60.0
+  battery_charge_power_kw: 60.0
+  battery_discharge_power_kw: 60.0
+  battery_efficiency: 0.9
+  soc_min: 0.2
+  soc_max: 0.8
+  clip_soc_to_bounds: false
+  use_real_data: true
+  dataset_csv_path: data\processed\pymgrid25_mg4_sellback_60kw.csv
+  dataset_pv_join_wind: false
+  dataset_time_column: timestamp
+  use_dataset_timestamps_for_obs: true
+  deployment_observation_style: true
+  deployment_window_steps: 1
+  deployment_load_threshold_kw: 1.0
+  deployment_group_power_kw: 15.0
+  grid_pv_load_per_group_kw_todo: null
+  battery_delivered_load_per_group_kw: null
+  continuous_operation_mode: true
+  soc_init_mode: full_random
+  deployment_guard_style: true
+  allow_grid_trading: true
+  allow_grid_export: true
+  ramp_limit_kw: null
+  hard_guard: false
+  reward_version: v16sp
+  tou_reward_scale: 1.0
+  action_dead_zone_kw: 0.5
+  discharge_intent_threshold_kw: 6.0
+  discharge_auto: true
+  discharge_mode: solo_only
+  voltage_cutoff_soc: 0.2
+  enforce_solo_discharge_load_limit: true
+  pv_obs_boolean: true
+  pv_obs_boolean_threshold_kw: 1.0
+  pv_support_ratio_obs: true
+  pv_support_ratio_max: 1.5
+  pv_sufficient_ratio_threshold: 0.8
+  price_obs: true
+  use_extended_obs: false
+  use_flow_rate_action: false
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 4800.0
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.6
+  flow_I_rated_A: 1.0
+  flow_min_active_fraction: 0.15
+  flow_idle_fraction: 0.0
+  flow_pump_from_grid: false
+  flow_charge_pump_free: false
+  flow_limits_available_power: false
+  flow_power_min_fraction: 0.15
+  flow_operating_rule_enabled: true
+  pre_measure_rest_flow_fraction: 0.0
+  pre_measure_flow_fraction: 0.5
+  pre_measure_seconds: 25
+  feed_in_tariff_ratio: 0.5
+charge_shaping:
+  solar_charge_coeff: 0.0
+  solar_waste_penalty: 0.0
+  power_util_coeff: 0.0
+guided_teacher:
+  enabled: false
+  demo_episodes: 0
+  demo_max_steps: 96
+  bc_epochs: 0
+  bc_batch_size: 512
+  bc_lr: 0.00025
+  save_actor_checkpoint: false
+  solar_charge_soc_target: 0.8
+  peak_discharge_soc_floor: 0.3
+  pv_surplus_threshold_kw: 2.0
+  pv_cover_charge_threshold: 0.95
+  pv_cover_charge_min_frac: 0.4
+  pv_bool_charge_min_frac: 0.2
+  peak_price: 7.13
+  offpeak_price: 2.06
+  emergency_grid_charge_soc: 0.25
+  emergency_grid_charge_target: 0.35
+  emergency_charge_ratio: 0.2
+sac:
+  actor_lr: 7.0e-07
+  critic_lr: 0.0001
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.025
+  target_entropy: -2.0
+  alpha_lr: 1.0e-06
+  hidden_dim: 256
+  buffer_size: 120000
+  batch_size: 256
+  warmup_steps: 2500
+  update_every: 8
+  beta_occ: 0.0
+  actor_update_interval: 6
+  alpha_update_interval: 8
+  actor_warmup_updates: 512
+  freeze_alpha: true
+occ_proxy:
+  mode: boundary_aware
+  delta_weight: 1.5
+  low_soc_weight: 1.8
+  high_soc_weight: 1.6
+  low_soc_threshold: 0.3
+  high_soc_threshold: 0.82
+  action_deadband_kw: 0.5
+  clamp_max: 3.0
+training:
+  total_episodes: 1000
+  max_steps: 24
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 50
+  variant: sac_penalty
+  safetynet_warmup_episodes: 250
+  lambda_evi: 0.001
+  beta_risk: 0.5
+safetynet:
+  ramp_limit_kw: null
+conformal:
+  window: 1440
+  delta: 0.1
+reward:
+  realized_violation_penalty: 12.0
+  attempted_violation_penalty: 0.25
+  safety_projection_penalty: 0.0
+  safety_projection_event_threshold_kw: 0.5
+  blocked_by_pv_penalty: 0.12
+  blocked_by_load_penalty: 0.22
+  solar_storage_value_scale: 1.0
+  solar_storage_value_price: 7.13
+  offpeak_charge_soc_target: 0.8
+  peak_discharge_soc_floor: 0.3
+  v17_offpeak_charge_bonus: 0.0
+  v17_peak_discharge_bonus: 0.35
+  v17_peak_idle_penalty: 0.1
+  v17_solar_storage_bonus_scale: 0.0
+stress:
+  enable: true
+  battery_response_noise_std: 0.02
+  battery_zero_response_prob: 0.005
+logging:
+  log_interval: 5
+  save_models: true
+  save_metrics: true
+  plot_results: false
+  csv_per_episode: true
