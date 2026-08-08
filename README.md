@@ -105,16 +105,10 @@ pytest
 
 ## 目前實務結論（務必讀）
 
-1. **Flow rate**  
-   小電池平台上馬達功耗可不小於放電能力。硬體部署請 **固定 flow**；介面與 log 可留，但不要宣稱已完成即時 flow 經濟最佳化。
-
-2. **SoC**  
-   主要是庫侖計＋校正的操作估計，不是真電荷量測。電壓 cutoff／回復會影響判讀；若要做 OCV，請用 **靜置電壓實驗**，不要直接從部署 log 硬套曲線。細節見 `docs/handover.md`。
-
-3. **SoH**  
+1. **SoH**  
    程式介面與 GUI 欄位已接好，**尚未在本實驗電池上驗證到可放心改容量**。勿開 `--soh-use-for-capacity` 上真機，除非有電池專屬老化驗證。
 
-4. **高風險修改（先別動，或務必加測試）**  
+2. **高風險修改（先別動，或務必加測試）**  
    - `control/io_protocol.py` 欄位解析  
    - `control/run_deployment.py` guard 順序  
    - 電流正負號慣例  
@@ -136,10 +130,8 @@ pytest
 ## 建議後續工作（給下一位）
 
 1. 硬體先穩 **安全充放電控制**  
-2. 量測各 flow 設定的馬達功耗，再決定要不要把 motor 當輔助負載建模  
-3. 做受控 SoC 靜置電壓校正  
-4. 有電池專屬老化資料後，再談 SoH 改容量  
-5. 維持 log：raw policy ↔ safety correction ↔ final command 可分開分析  
+2. 有電池專屬老化資料後，再談 SoH 改容量  
+3. 維持 log：raw policy ↔ safety correction ↔ final command 可分開分析  
 
 ---
 
