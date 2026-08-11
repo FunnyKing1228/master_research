@@ -1,0 +1,118 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB v15 — 1A Rated Current + Latest Deployment Data
+# ─────────────────────────────────────────────────────────────────
+# Changes from v14:
+#   1. Battery current: 150mA → 1A (professor directive)
+#      - Charge power: 8.5V × 1A = 8.5W (was 1.275W)
+#      - Discharge power: 5.6V × 1A = 5.6W (was 0.84W)
+#      - Capacity: 12Ah × 5.6V = 67.2Wh (was 9.9Wh)
+#   2. Training data: real deployment 03/25~03/30 (5.5 days)
+#      with variable load pattern applied
+#   3. Episodes: 2000 (reduced from 3000)
+#   4. Reward: v14 grid minimization (proven effective)
+#
+# Battery spec (actual P302 SLFB):
+#   Charge voltage:   8.5V  → max charge power  8.5W
+#   Discharge voltage: 5.6V → max discharge power 5.6W
+#   Capacity: 12Ah, max stored energy 67.2Wh
+#   Rated current: 1A (upgraded from 150mA)
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 192          # 2 days (48h × 4 steps/h), fits 5.5-day dataset
+  time_step: 0.25              # 15 min
+
+  # Battery: 12Ah SLFB @ 1A rated current
+  battery_capacity_kwh: 0.0672   # 67.2 Wh (12Ah × 5.6V)
+  battery_power_kw: 0.0056      # 5.6W (discharge limit: 5.6V × 1A)
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_v15_6day.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  # v14 reward (keep proven design)
+  reward_version: "v14"
+  tou_reward_scale: 5000
+
+  # 100 mW dead zone (matches deployment threshold)
+  action_dead_zone_kw: 0.0001
+
+  # Flow battery model @ 1A
+  use_flow_rate_action: true
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.6
+  flow_I_rated_A: 1.0            # 150mA → 1A
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+  # Fully random SoC init
+  soc_init_mode: "full_random"
+
+# Reward shaping
+charge_shaping:
+  solar_charge_coeff: 1.0
+  solar_waste_penalty: 0.5
+  power_util_coeff: 0.5
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.10
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 256
+  buffer_size: 200000
+  batch_size: 256
+  warmup_steps: 3000
+  update_every: 4
+
+training:
+  total_episodes: 2000           # reduced from 3000
+  max_steps: 192
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 100
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 300
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 2880
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 10
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

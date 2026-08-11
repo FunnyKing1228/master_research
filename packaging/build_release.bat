@@ -12,12 +12,15 @@ REM === 確認 Python ===
 where python >nul 2>&1
 if %errorlevel%==0 (
     set PYTHON=python
-) else if exist "C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe" (
-    set PYTHON="C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe"
 ) else (
-    echo [ERROR] Python not found!
-    pause
-    exit /b 1
+    where py >nul 2>&1
+    if %errorlevel%==0 (
+        set PYTHON=py -3
+    ) else (
+        echo [ERROR] Python not found!
+        pause
+        exit /b 1
+    )
 )
 echo Python: %PYTHON%
 

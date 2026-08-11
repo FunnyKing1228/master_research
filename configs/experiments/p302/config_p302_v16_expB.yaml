@@ -1,0 +1,121 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB v16 — Updated Specs (2Ah battery, 2.3W×4 load, 1A)
+# ─────────────────────────────────────────────────────────────────
+# Changes from v14:
+#   1. Battery: 2Ah / 11.2Wh (was 12Ah/9.9Wh)
+#   2. Current: 1A (was 150mA) → charge 8.5W, discharge 5.6W
+#   3. Load: 4 groups × 2.3W = 9.2W max (was 4 × 150mW = 600mW)
+#   4. Solar: scaled to match realistic ~50W panel output
+#   5. Voltage unchanged (OCV_charge=8.5V, OCV_discharge=5.6V)
+#   6. Reward: pure profit (grid cost savings only, no hand-crafted shaping)
+#   7. Dead zone scaled proportionally (~1% of P_max)
+#
+# Hardware reference:
+#   - SLFB battery: 2Ah, 5.6V nominal, 8.5V charge
+#   - DC load: 4 resistor groups × 2.3W each
+#   - Solar panel: peak 50W (scaled from deployment data)
+#   - Grid backup: AC/DC converter
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 288          # 3 days (72h × 4 steps/h)
+  time_step: 0.25              # 15 min
+
+  battery_capacity_kwh: 0.0112       # 2Ah × 5.6V = 11.2 Wh
+  battery_power_kw: 0.0056           # 5.6V × 1A = 5.6W discharge
+  battery_charge_power_kw: 0.0085    # 8.5V × 1A = 8.5W charge
+  battery_discharge_power_kw: 0.0056 # 5.6V × 1A = 5.6W discharge
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_v16.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  reward_version: "v16e"
+  tou_reward_scale: 800          # scaled down: power is ~7x larger → costs ~7x larger
+
+  # v16: dead zone ~1% of P_max (56 mW for 5.6W battery)
+  action_dead_zone_kw: 0.00005  # 50 mW
+
+  use_flow_rate_action: false
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.6
+  flow_I_rated_A: 1.0
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+  # V16b: PV observation → boolean (0/1) for sim-to-real alignment
+  pv_obs_boolean: true
+  pv_obs_boolean_threshold_kw: 0.001  # >1W → 1.0
+
+  soc_init_mode: "full_random"
+
+# ── v16: reward shaping (solar/power awareness) ──────────────────
+charge_shaping:
+  solar_charge_coeff: 1.0
+  solar_waste_penalty: 0.5
+  power_util_coeff: 0.5
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.10               # Slightly higher entropy for more exploration
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 256            # Larger network for richer state space
+  buffer_size: 200000
+  batch_size: 256
+  warmup_steps: 3000
+  update_every: 4
+
+training:
+  total_episodes: 1000
+  max_steps: 288
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 100
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 200
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 2880
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+  blocked_by_pv_penalty: 0.10
+  blocked_by_load_penalty: 0.05
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 10
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

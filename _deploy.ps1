@@ -112,6 +112,7 @@ $configGui = @{
     experiment_name = $EXPERIMENT
     initial_soc = 20.0
     load_count = 4
+    load_power_per_unit_w = 0.1
     log_dir = $LOG_DIR
     device = "cpu"
     poll_sec = 10.0

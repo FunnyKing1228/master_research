@@ -1,12 +1,10 @@
 # Project Handover Notes
 
-
-## Handover Copy Note (2026-08-08)
-
-This private handover copy **does not include** `thesis_sim/` (Chapter-4 simulation sandbox and large generated outputs). Deployment, training core, GUI, and packaging remain.
 This document is for the next researcher or engineer who continues the P302
 microgrid RL deployment work. It focuses on what is currently usable, what must
 be handled carefully on hardware, and what should be treated as future work.
+
+繁體中文生命週期交接入口：[`HANDOVER_zh.md`](HANDOVER_zh.md)。
 
 ## Current Project Status
 

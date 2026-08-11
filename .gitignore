@@ -183,9 +183,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
@@ -222,13 +222,16 @@ config_gui.json
 *.pt
 *.ckpt
 *.pkl
+*.npz
+core/soh_predictor/model/
 # If a final RL checkpoint must be tracked, add it explicitly with git add -f.
-# Exception: lightweight SoH predictor artifacts required for bundled inference.
-!core/soh_predictor/model/*.pth
-!core/soh_predictor/model/*.npz
 
 # --- Experiment outputs ---
 experiments/
+!experiments/
+experiments/*
+!experiments/README.md
+!experiments/README_AI.md
 ablation_results/
 stressm_analysis_results/
 batch_logs/
@@ -237,6 +240,9 @@ batch_logs/
 *.h5
 *.hdf5
 *.csv
+# Small, curated plotting-handoff fixtures are intentionally versioned.
+!tools/plotting_handoff/dataset/
+!tools/plotting_handoff/dataset/*.csv
 
 # --- Runtime hardware/vendor data ---
 Data_ID*/
@@ -270,11 +276,8 @@ Microgrid_AI/
 *.zip
 !packaging/*.zip
 
-# --- Chapter 4 thesis simulation is version-controlled (incl. outputs) ---
-# Re-include thesis_sim so global *.csv / output rules do not exclude it.
-!thesis_sim/
-!thesis_sim/**
-thesis_sim/**/*.zip
+# --- Large thesis simulation sandbox is external to the public source snapshot ---
+thesis_sim/
 
 # --- Windows system files ---
 Thumbs.db

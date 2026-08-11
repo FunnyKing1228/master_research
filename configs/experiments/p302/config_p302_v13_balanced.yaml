@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB v13 — Balanced Charge-Discharge with Timing Awareness
+# ─────────────────────────────────────────────────────────────────
+# v12 問題：充電獎勵太強，模型學會「亂充刷分」不放電
+#
+# v13 設計原則：
+#   1. SoC 起點平衡分布 → 40% 低 / 30% 中 / 30% 高
+#      讓模型在各種 SoC 下都有練習機會
+#   2. 經濟信號（TOU 套利）回歸主導 → tou_reward_scale = 7000
+#   3. 功率獎勵跟時段綁定：
+#      - 尖峰大力放電 → 高獎勵
+#      - 離峰/太陽能大力充電 → 中獎勵
+#      - 其他時段功率大小不額外獎勵
+#   4. 移除「充就有分」的盲目獎勵
+#   5. 太陽能充電獎勵保留但與功率成正比（充越大越好，但只在有太陽時）
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 276
+  time_step: 0.25
+
+  battery_capacity_kwh: 0.00990
+  battery_power_kw: 0.000825
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_recent_15min.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  # 經濟信號回歸主導
+  tou_reward_scale: 7000
+
+  use_flow_rate_action: true
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.5
+  flow_I_rated_A: 0.150
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+  # v13: 平衡 SoC 起點（40% 低 / 30% 中 / 30% 高）
+  soc_init_mode: "balanced"
+
+# ── v13 時段感知的充放電獎勵 ────────────────────────────────────
+charge_shaping:
+  solar_charge_coeff: 1.2        # 太陽能充電獎勵（與功率成正比）
+  solar_waste_penalty: 0.6       # 浪費太陽能懲罰
+  # 尖峰放電 / 離峰充電 功率獎勵（只在正確時段生效）
+  power_util_coeff: 0.8
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.08
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 128
+  buffer_size: 100000
+  batch_size: 256
+  warmup_steps: 2000
+  update_every: 4
+
+training:
+  total_episodes: 2000
+  max_steps: 276
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 100
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 300
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 2880
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 10
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

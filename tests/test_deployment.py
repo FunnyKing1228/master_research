@@ -28,10 +28,13 @@ PROJECT_ROOT = os.path.join(SCRIPT_DIR, '..')
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'control'))
 
+import control.run_deployment as deployment
 from control.run_deployment import (
     SoCTracker,
     DataBuffer,
     Reading,
+    PreMeasureResult,
+    ProbeDischargeResult,
     DeploymentLogger,
     RawDataLogger,
     build_state_from_aggregation,
@@ -63,6 +66,14 @@ from control.run_deployment import (
     FLOW_REST_PCT,
     FLOW_PRE_MEASURE_PCT,
     VOLTAGE_RECOVERY_SECONDS,
+    PRE_MEASURE_SAMPLE_SECONDS,
+    PRE_MEASURE_MAX_SECONDS,
+    PRE_MEASURE_STABLE_SAMPLES,
+    PRE_MEASURE_STABLE_TOLERANCE_V,
+    PROBE_DISCHARGE_POWER_MW,
+    PROBE_DISCHARGE_SECONDS,
+    PROBE_SAMPLE_SECONDS,
+    PROBE_MAX_VOLTAGE_DROP_V,
     FLOW_IDLE_PCT,
     FLOW_MIN_ACTIVE_PCT,
     STANDBY_SITUATION_CODE,
@@ -71,6 +82,9 @@ from control.run_deployment import (
     write_standby_rest_command,
     write_pre_measure_command,
     perform_pre_measure_for_decision,
+    _voltage_is_stable,
+    perform_stable_pre_measure_for_decision,
+    perform_probe_discharge,
     TOU_OFFPEAK,
     TOU_MIDPEAK,
     TOU_PEAK,
@@ -104,7 +118,6 @@ class TestSafePrint:
         stream = io.TextIOWrapper(raw, encoding="cp950", errors="strict")
 
         safe_print("  ⚠ PV still active", file=stream, end="")
-        stream.flush()
 
         output = raw.getvalue().decode("cp950", errors="strict")
         assert "\\u26a0" in output
@@ -132,6 +145,16 @@ class TestSafePrint:
         assert apply_flow_operating_rule(10.0, active=True) == pytest.approx(FLOW_MIN_ACTIVE_PCT)
         assert STANDBY_SITUATION_CODE == 3
         assert PRE_MEASURE_SITUATION_CODE == 3
+
+    def test_stable_pre_measure_and_probe_constants(self):
+        assert PRE_MEASURE_SAMPLE_SECONDS == pytest.approx(2.5)
+        assert PRE_MEASURE_MAX_SECONDS == pytest.approx(90.0)
+        assert PRE_MEASURE_STABLE_SAMPLES == 3
+        assert PRE_MEASURE_STABLE_TOLERANCE_V == pytest.approx(0.05)
+        assert PROBE_DISCHARGE_POWER_MW == 150
+        assert PROBE_DISCHARGE_SECONDS == pytest.approx(10.0)
+        assert PROBE_SAMPLE_SECONDS == pytest.approx(1.0)
+        assert PROBE_MAX_VOLTAGE_DROP_V == pytest.approx(0.30)
 
     def test_pv_present_threshold_matches_low_power_load(self):
         # The load bank is only about 0.4 W, so this must stay far below the old 1 W threshold.
@@ -724,6 +747,201 @@ class TestWriteCommandSimple:
         assert "01,0,50," in content
 
 
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def _reading_sequence(voltages):
+    readings = [
+        Reading(
+            timestamp=datetime(2026, 3, 16, 12, 0, index, tzinfo=TZ_UTC8),
+            batt_v=voltage,
+        )
+        for index, voltage in enumerate(voltages)
+    ]
+    iterator = iter(readings)
+    return lambda *_args, **_kwargs: next(iterator, readings[-1])
+
+
+class TestStablePreMeasure:
+    def _run(self, voltages, **kwargs):
+        clock = _FakeClock()
+        return perform_stable_pre_measure_for_decision(
+            "Data.txt",
+            "Command.txt",
+            "01",
+            4,
+            minimum_seconds=0.0,
+            maximum_seconds=float(len(voltages)),
+            sample_seconds=1.0,
+            stable_samples=3,
+            stable_tolerance_v=0.05,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+            read_fn=_reading_sequence(voltages),
+            dry_run=True,
+            **kwargs,
+        )
+
+    def test_voltage_stability_helper_uses_recent_valid_samples(self):
+        ts = datetime(2026, 3, 16, 12, 0, 0, tzinfo=TZ_UTC8)
+        samples = [
+            Reading(timestamp=ts, batt_v=0.0),
+            Reading(timestamp=ts + timedelta(seconds=1), batt_v=5.00),
+            Reading(timestamp=ts + timedelta(seconds=2), batt_v=5.04),
+            Reading(timestamp=ts + timedelta(seconds=3), batt_v=5.02),
+        ]
+        assert _voltage_is_stable(samples, 3, 0.05)
+        assert not _voltage_is_stable(samples, 3, 0.01)
+
+    def test_stable_safe_voltage_is_ready_for_probe(self):
+        result = self._run([5.20, 5.22, 5.21])
+
+        assert isinstance(result, PreMeasureResult)
+        assert result.stable
+        assert result.ready_for_probe
+        assert not result.confirmed_undervoltage
+        assert result.reason == "stable_above_cutoff"
+
+    def test_rising_voltage_remains_pending(self):
+        result = self._run([3.80, 3.95, 4.10])
+
+        assert not result.stable
+        assert result.recovering
+        assert not result.ready_for_probe
+        assert not result.confirmed_undervoltage
+        assert result.reason == "voltage_still_recovering"
+
+    def test_stable_low_voltage_is_confirmed(self):
+        result = self._run([4.00, 4.02, 4.01])
+
+        assert result.stable
+        assert result.confirmed_undervoltage
+        assert not result.ready_for_probe
+        assert result.reason == "stable_below_cutoff"
+
+
+class TestProbeDischarge:
+    def _run(self, monkeypatch, voltages, **kwargs):
+        clock = _FakeClock()
+        commands = []
+        monkeypatch.setattr(
+            deployment,
+            "write_command_simple",
+            lambda *args, **kw: commands.append(("probe", args, kw)) or True,
+        )
+        monkeypatch.setattr(
+            deployment,
+            "write_standby_rest_command",
+            lambda *args, **kw: commands.append(("rest", args, kw)) or True,
+        )
+        result = perform_probe_discharge(
+            "Data.txt",
+            "Command.txt",
+            "01",
+            load_count=4,
+            load_power_per_unit_w=0.1,
+            baseline_voltage_v=5.50,
+            requested_power_mw=150,
+            duration_seconds=float(len(voltages)),
+            sample_seconds=1.0,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+            read_fn=_reading_sequence(voltages),
+            **kwargs,
+        )
+        return result, commands
+
+    def test_probe_passes_and_covers_full_load(self, monkeypatch):
+        result, commands = self._run(monkeypatch, [5.45, 5.40, 5.42])
+
+        assert isinstance(result, ProbeDischargeResult)
+        assert result.attempted
+        assert result.passed
+        assert result.reason == "stable"
+        assert result.command_power_mw == 400
+        assert [command[0] for command in commands] == ["probe", "rest"]
+
+    def test_probe_fails_below_cutoff(self, monkeypatch):
+        result, commands = self._run(monkeypatch, [5.45, 4.10])
+
+        assert not result.passed
+        assert result.reason == "below_cutoff"
+        assert result.minimum_voltage_v == pytest.approx(4.10)
+        assert commands[-1][0] == "rest"
+
+    def test_probe_fails_excessive_voltage_drop(self, monkeypatch):
+        result, commands = self._run(monkeypatch, [5.45, 5.19])
+
+        assert not result.passed
+        assert result.reason == "excessive_voltage_drop"
+        assert result.voltage_drop_v == pytest.approx(0.31)
+        assert commands[-1][0] == "rest"
+
+    def test_probe_rest_runs_when_reader_raises(self, monkeypatch):
+        clock = _FakeClock()
+        commands = []
+        monkeypatch.setattr(deployment, "write_command_simple", lambda *a, **k: True)
+        monkeypatch.setattr(
+            deployment,
+            "write_standby_rest_command",
+            lambda *a, **k: commands.append("rest") or True,
+        )
+
+        with pytest.raises(RuntimeError, match="reader failed"):
+            perform_probe_discharge(
+                "Data.txt",
+                "Command.txt",
+                "01",
+                load_count=4,
+                load_power_per_unit_w=0.1,
+                baseline_voltage_v=5.5,
+                duration_seconds=1.0,
+                sample_seconds=1.0,
+                sleep_fn=clock.sleep,
+                monotonic_fn=clock.monotonic,
+                read_fn=lambda *_a, **_k: (_ for _ in ()).throw(
+                    RuntimeError("reader failed")
+                ),
+            )
+
+        assert commands == ["rest"]
+
+    def test_probe_dry_run_writes_nothing(self, monkeypatch):
+        monkeypatch.setattr(
+            deployment,
+            "write_command_simple",
+            lambda *a, **k: pytest.fail("dry-run wrote probe command"),
+        )
+        monkeypatch.setattr(
+            deployment,
+            "write_standby_rest_command",
+            lambda *a, **k: pytest.fail("dry-run wrote rest command"),
+        )
+
+        result = perform_probe_discharge(
+            "Data.txt",
+            "Command.txt",
+            "01",
+            load_count=4,
+            load_power_per_unit_w=0.1,
+            baseline_voltage_v=5.5,
+            dry_run=True,
+        )
+
+        assert result.passed
+        assert not result.attempted
+        assert result.reason == "dry_run"
+        assert result.command_power_mw == 400
+
+
 # ══════════════════════════════════════════════════════════════════
 # DeploymentLogger
 # ══════════════════════════════════════════════════════════════════
@@ -744,6 +962,44 @@ class TestDeploymentLogger:
             reader = csv.reader(f)
             header = next(reader)
         assert header == DeploymentLogger.HEADER
+
+    def test_stable_pre_measure_probe_fields_are_present(self):
+        expected = {
+            'pre_measure_status', 'pre_measure_samples', 'pre_measure_duration_sec',
+            'pre_measure_stable', 'pre_measure_voltage_v',
+            'probe_attempted', 'probe_passed', 'probe_reason',
+            'probe_power_mw', 'probe_min_voltage_v', 'probe_voltage_drop_v',
+            'voltage_confirmation_pending',
+        }
+        assert expected.issubset(DeploymentLogger.HEADER)
+
+    def test_stable_pre_measure_probe_values_are_written(self, tmp_dir):
+        logger = DeploymentLogger(tmp_dir)
+        expected = {
+            'pre_measure_status': 'stable_above_cutoff',
+            'pre_measure_samples': 3,
+            'pre_measure_duration_sec': '25.0',
+            'pre_measure_stable': 1,
+            'pre_measure_voltage_v': '5.200',
+            'probe_attempted': 1,
+            'probe_passed': 1,
+            'probe_reason': 'stable',
+            'probe_power_mw': 400,
+            'probe_min_voltage_v': '5.150',
+            'probe_voltage_drop_v': '0.050',
+            'voltage_confirmation_pending': 0,
+        }
+        logger.log({
+            'timestamp': '2026-03-16 12:00:00',
+            **expected,
+        })
+
+        with open(logger.path, 'r', encoding='utf-8-sig') as f:
+            row = next(csv.DictReader(f))
+
+        assert {key: row[key] for key in expected} == {
+            key: str(value) for key, value in expected.items()
+        }
 
     def test_log_row(self, tmp_dir):
         logger = DeploymentLogger(tmp_dir)

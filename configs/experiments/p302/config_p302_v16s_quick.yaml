@@ -1,0 +1,99 @@
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 96
+  time_step: 0.25
+
+  battery_capacity_kwh: 0.0112
+  battery_power_kw: 0.0056
+  battery_charge_power_kw: 0.0085
+  battery_discharge_power_kw: 0.0056
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_v16.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  reward_version: "v16s"
+  tou_reward_scale: 800
+  action_dead_zone_kw: 0.00005
+
+  use_flow_rate_action: false
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.6
+  flow_I_rated_A: 1.0
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+  pv_obs_boolean: true
+  pv_obs_boolean_threshold_kw: 0.001
+  soc_init_mode: "full_random"
+
+charge_shaping:
+  solar_charge_coeff: 0.0
+  solar_waste_penalty: 0.0
+  power_util_coeff: 0.0
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.10
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 256
+  buffer_size: 50000
+  batch_size: 128
+  warmup_steps: 1000
+  update_every: 4
+
+training:
+  total_episodes: 40
+  max_steps: 96
+  eval_every: 10
+  eval_episodes: 2
+  save_every: 20
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 10
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 960
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+  blocked_by_pv_penalty: 0.10
+  blocked_by_load_penalty: 0.05
+  solar_storage_value_scale: 1.0
+  solar_storage_value_price: 7.13
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 5
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

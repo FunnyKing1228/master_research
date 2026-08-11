@@ -1,0 +1,160 @@
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 288
+  time_step: 0.25
+
+  battery_capacity_kwh: 0.0112
+  battery_power_kw: 0.0056
+  battery_charge_power_kw: 0.0085
+  battery_discharge_power_kw: 0.0056
+  battery_efficiency: 0.95
+  soc_min: 0.20
+  soc_max: 0.80
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_v18_0511_curated.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+  use_dataset_timestamps_for_obs: true
+
+  deployment_observation_style: true
+  deployment_window_steps: 1
+  deployment_load_threshold_kw: 0.0005
+  deployment_group_power_kw: 0.0023
+  continuous_operation_mode: true
+  deployment_guard_style: true
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  reward_version: "v16sp"
+  tou_reward_scale: 800
+  action_dead_zone_kw: 0.00005
+
+  use_flow_rate_action: false
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.6
+  flow_I_rated_A: 1.0
+
+  # Training and deployment semantics:
+  # negative action means "attempt Battery Solo"; actual discharge is load-matched.
+  discharge_auto: true
+  discharge_mode: "solo_only"
+  voltage_cutoff_soc: 0.20
+  use_extended_obs: false
+
+  pv_obs_boolean: true
+  pv_obs_boolean_threshold_kw: 0.001
+  pv_support_ratio_obs: true
+  pv_support_ratio_max: 1.5
+  pv_sufficient_ratio_threshold: 0.8
+  price_obs: true
+  soc_init_mode: "full_random"
+
+charge_shaping:
+  solar_charge_coeff: 0.0
+  solar_waste_penalty: 0.0
+  power_util_coeff: 0.0
+
+guided_teacher:
+  enabled: false
+  demo_episodes: 0
+  demo_max_steps: 288
+  bc_epochs: 0
+  bc_batch_size: 512
+  bc_lr: 0.00025
+  save_actor_checkpoint: false
+  solar_charge_soc_target: 0.74
+  peak_discharge_soc_floor: 0.24
+  pv_surplus_threshold_kw: 0.0002
+  pv_cover_charge_threshold: 0.95
+  pv_cover_charge_min_frac: 0.40
+  pv_bool_charge_min_frac: 0.20
+  peak_price: 7.13
+  offpeak_price: 2.06
+  emergency_grid_charge_soc: 0.0
+  emergency_grid_charge_target: 0.24
+  emergency_charge_ratio: 0.20
+
+sac:
+  actor_lr: 0.0000007
+  critic_lr: 0.0001
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.025
+  target_entropy: -2.0
+  alpha_lr: 0.000001
+  hidden_dim: 256
+  buffer_size: 120000
+  batch_size: 256
+  warmup_steps: 4000
+  update_every: 8
+  beta_occ: 0.8
+  actor_update_interval: 6
+  alpha_update_interval: 8
+  actor_warmup_updates: 768
+  freeze_alpha: true
+
+occ_proxy:
+  mode: "boundary_aware"
+  delta_weight: 1.5
+  low_soc_weight: 1.8
+  high_soc_weight: 1.6
+  low_soc_threshold: 0.26
+  high_soc_threshold: 0.74
+  action_deadband_kw: 0.00005
+  clamp_max: 3.0
+
+training:
+  total_episodes: 800
+  max_steps: 288
+  eval_every: 20
+  eval_episodes: 2
+  save_every: 50
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 200
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 1440
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 12.0
+  attempted_violation_penalty: 0.10
+  safety_projection_penalty: 0.025
+  safety_projection_event_threshold_kw: 0.00005
+  blocked_by_pv_penalty: 0.12
+  blocked_by_load_penalty: 0.22
+  solar_storage_value_scale: 1.0
+  solar_storage_value_price: 7.13
+  offpeak_charge_soc_target: 0.74
+  peak_discharge_soc_floor: 0.24
+  v17_offpeak_charge_bonus: 0.0
+  v17_peak_discharge_bonus: 0.35
+  v17_peak_idle_penalty: 0.10
+  v17_solar_storage_bonus_scale: 0.0
+
+stress:
+  enable: true
+  battery_response_noise_std: 0.08
+  battery_zero_response_prob: 0.02
+
+logging:
+  log_interval: 5
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

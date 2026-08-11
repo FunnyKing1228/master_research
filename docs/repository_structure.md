@@ -1,5 +1,7 @@
 # Proposed Repository Structure
 
+> This is a proposal, not a guaranteed map of the current working tree. For current entry points, use [`HANDOVER_zh.md`](HANDOVER_zh.md); AI maintainers start at [`../AGENTS.md`](../AGENTS.md).
+
 The public repository should present the project as a clean research system,
 not as a full working directory containing every intermediate experiment.
 

@@ -1,0 +1,120 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB v14 — Grid Minimization with Randomized Training
+# ─────────────────────────────────────────────────────────────────
+# v13 problems:
+#   1. Model never discharged (all actions were positive charge)
+#   2. Commands < 100mW became standby in deployment (sim-real gap)
+#   3. Training data too short (2.9 days), no load variation
+#   4. SoC init was stratified, not truly random
+#
+# v14 design:
+#   1. Reward = minimize grid usage (discharge during peak saves $)
+#   2. 100mW dead zone in simulation matches deployment threshold
+#   3. 14-day training data with variable load (1-4 groups × 150mW)
+#   4. Fully random SoC init [soc_min, soc_max]
+#   5. Random start time (long dataset + short episode = varied starts)
+#   6. 3-day episodes (288 steps) for multi-day pattern learning
+#   7. 3000 episodes for thorough exploration
+#
+# Load pattern reference:
+#   - IEC 62257-9 microgrid load profiles
+#   - IEEE Std 1547-2018 distributed generation
+#   - P302 lab: 4 groups × ~150 mW each = 600 mW full load
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 288          # 3 days (72h × 4 steps/h)
+  time_step: 0.25              # 15 min
+
+  battery_capacity_kwh: 0.00990
+  battery_power_kw: 0.000825
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_v14_14day.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  # v14: Grid minimization reward
+  reward_version: "v14"
+  tou_reward_scale: 5000
+
+  # v14: 100 mW dead zone (matches deployment threshold)
+  action_dead_zone_kw: 0.0001   # 0.1 W = 100 mW
+
+  use_flow_rate_action: true
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.5
+  flow_I_rated_A: 0.150
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+  # v14: fully random SoC initialization
+  soc_init_mode: "full_random"
+
+# ── v14: reward shaping (solar/power awareness) ──────────────────
+charge_shaping:
+  solar_charge_coeff: 1.0
+  solar_waste_penalty: 0.5
+  power_util_coeff: 0.5
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.10               # Slightly higher entropy for more exploration
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 256            # Larger network for richer state space
+  buffer_size: 200000
+  batch_size: 256
+  warmup_steps: 3000
+  update_every: 4
+
+training:
+  total_episodes: 3000
+  max_steps: 288
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 100
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 400
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 2880
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 10
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true

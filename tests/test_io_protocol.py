@@ -265,13 +265,15 @@ class TestReadVendorDataFile:
     def test_newest_format_with_grid_and_charge_v(self, tmp_dir):
         """2026/03/20+ format: 9 MPPT + 6 Load/Grid + 7 battery fields."""
         content = (
-            "20260320120000\n"
+            "20260320120000,3\n"
             "1600,500,8000,1500,450,6750,1200,300,3600,\n"
             "550,33,400,2200,100,220000,\n"
             "1,101,720,500,1200,332,1000,\n"
         )
         path = self._write(tmp_dir, content)
         result = read_vendor_data_file(path, clear_after_read=False)
+
+        assert result.get('vendor_load_count') == 3
 
         # MPPT
         assert result['mppt'] is not None

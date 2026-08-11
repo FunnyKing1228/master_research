@@ -1,4 +1,6 @@
-# Project Issues And Solutions
+﻿# Project Issues And Solutions
+
+> **歷史問題紀錄，不是目前 release 清單。** 本檔保留問題演進與舊決策；目前候選、checkpoint、package、source divergence 與 hash 一律以 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md) 和 [`docs/handover/experiment_inventory.md`](docs/handover/experiment_inventory.md) 為準。下方「目前主候選」是當時的 v16sp 快照，不能覆蓋現行 v22 manifest。
 
 本檔用來記錄這個專案在訓練、部署對齊、圖表判讀與論文撰寫過程中，已確認的問題、得到的教訓、做過的修正，以及目前仍待驗證的假說。
 
@@ -16,6 +18,31 @@
   - 這個候選的價值不只是 reward，而是它已把 deployment-style observation、continuous operation、guard-in-the-loop、battery response stress 一起納入。
   - 使用者在本輪檢查後，已明確選擇 `final` 作為當前 release 版本，而不是繼續沿用更早期的 `best checkpoint` 主線。
   - 這代表「此次部署候選」與「歷史上常見 best 優於 final 的經驗」需要分開描述，不能混為一談。
+
+
+## 2026-08-07 修復紀錄（release 起不來 / Data.txt 負載組數未入 CSV）
+
+### 症狀
+- `Microgrid_AI\release\P302_AI_GUI.exe` 彈出 `Failed to start embedded python interpreter!`
+- 使用者看不到可選的 load pattern，也無法測 load pattern
+
+### 根因
+- `release\_internal` 被掏空（約 166 檔，缺 `base_library.zip` / 完整 runtime），不是完整 PyInstaller onedir
+- 先前只把 `load_pattern.txt` 丟進壞掉的 `release`，沒有重建整包
+
+### 處理
+- 以完整 `release_v22_flow_power_limited` 重建 `Microgrid_AI\release`
+- 覆寫最新 `control/io_protocol.py`、`control/run_deployment.py`
+- Data.txt 第一行 `YYYYMMDDhhmmss,{N}` 現在會解析為 `vendor_load_count`
+- CSV 新增：`vendor_load_count`、`load_power_per_unit_w`、`load_power_est_w`（組數 × 每組功率）
+- 每組功率可由 `config_gui.json` 的 `load_power_per_unit_w` 設定（預設 0.1）
+- GUI 也加了「每組功率(W)」欄位，但需完整 PyInstaller 重打包後介面才會出現；目前 overlay 包已可經 config 生效
+
+### 今晚驗證重點
+1. EXE 可正常啟動
+2. log 出現 `[LOAD] Loaded schedule from ...\load_pattern.txt`
+3. Command.txt / Data.txt 第一行負載組數隨 schedule 變化
+4. `raw_data_v2_*.csv` / `deployment_v2_*.csv` 有上述三欄
 
 ## 已確認的重要教訓
 

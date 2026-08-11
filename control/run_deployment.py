@@ -82,6 +82,7 @@ def _make_console_streams_safe() -> None:
 
 def safe_print(*args, **kwargs) -> None:
     """Best-effort print that never raises UnicodeEncodeError."""
+    kwargs.setdefault("flush", True)
     try:
         builtins.print(*args, **kwargs)
         return
@@ -307,6 +308,14 @@ FLOW_MIN_ACTIVE_PCT = 60.0
 FLOW_REST_PCT = 0.0
 FLOW_PRE_MEASURE_PCT = 50.0
 VOLTAGE_RECOVERY_SECONDS = float(os.environ.get("P302_VOLTAGE_RECOVERY_SECONDS", "25.0"))
+PRE_MEASURE_SAMPLE_SECONDS = 2.5
+PRE_MEASURE_MAX_SECONDS = 90.0
+PRE_MEASURE_STABLE_SAMPLES = 3
+PRE_MEASURE_STABLE_TOLERANCE_V = 0.05
+PROBE_DISCHARGE_POWER_MW = 150
+PROBE_DISCHARGE_SECONDS = 10.0
+PROBE_SAMPLE_SECONDS = 1.0
+PROBE_MAX_VOLTAGE_DROP_V = 0.30
 FLOW_IDLE_PCT = FLOW_REST_PCT  # Backward-compatible public alias for rest flow.
 
 BATTERY_CAPACITY_MAH  = _system_current_a * 1000 * DISCHARGE_HOURS        # 2000.0 mAh
@@ -437,6 +446,7 @@ class Reading:
     batt_i_ma: float = 0.0
     batt_temp_c: float = 25.0
     batt_speed_pct: float = 0.0
+    vendor_load_count: Optional[int] = None
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -481,6 +491,7 @@ class DataBuffer:
                 'batt_p_mean_mW': 0.0,
                 'batt_v_mean': 0.0, 'batt_v_min': 0.0, 'batt_v_max': 0.0,
                 'batt_i_mean_ma': 0.0,
+                'vendor_load_count': None,
                 'n_samples': 0, 'completeness': 0.0,
             }
 
@@ -504,6 +515,12 @@ class DataBuffer:
 
         bus_p_mean = float(np.mean(bus_p_vals)) if bus_p_vals else 0.0
         load_p_mean = float(np.mean(load_p_vals)) if load_p_vals else 0.0
+        vendor_counts = [
+            int(r.vendor_load_count)
+            for r in self.readings
+            if r.vendor_load_count is not None
+        ]
+        vendor_load_count = int(round(float(np.median(vendor_counts)))) if vendor_counts else None
 
         return {
             'mppt_p_mean_mW': mppt_mean,
@@ -518,6 +535,7 @@ class DataBuffer:
             'batt_i_mean_ma': float(np.mean(batt_i_vals)) if batt_i_vals else 0.0,
             'bus_v_mean': float(np.mean(bus_v_vals_raw)) if bus_v_vals_raw else 0.0,
             'grid_v_mean': float(np.mean(grid_v_vals_raw)) if grid_v_vals_raw else 0.0,
+            'vendor_load_count': vendor_load_count,
             'n_samples': n,
             'completeness': completeness,
         }
@@ -946,11 +964,17 @@ def read_data_txt(path: str, battery_pp: str = "01") -> Optional[Reading]:
         mppt_bus = result.get('mppt_bus')
         load_hw  = result.get('load')
         grid_hw  = result.get('grid')
+        vendor_load_count = result.get('vendor_load_count')
     except Exception:
         return None
 
     now = datetime.now(TZ_UTC8)
     reading = Reading(timestamp=now)
+    if vendor_load_count is not None:
+        try:
+            reading.vendor_load_count = int(vendor_load_count)
+        except (TypeError, ValueError):
+            reading.vendor_load_count = None
 
     if mppt_data is not None:
         solar_v, solar_i_ma, solar_p_mw, mppt_v, mppt_i_ma, mppt_p_mw = mppt_data
@@ -994,6 +1018,38 @@ def read_data_txt(path: str, battery_pp: str = "01") -> Optional[Reading]:
     return reading
 
 
+def _resolve_load_power_per_unit_w(cli_value: Optional[float]) -> float:
+    """Resolve per-group load power (W) from CLI, config_gui.json, or default."""
+    if cli_value is not None:
+        try:
+            value = float(cli_value)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, 'config_gui.json'))
+    candidates.append(os.path.join(PROJECT_ROOT, 'config_gui.json'))
+    candidates.append(os.path.join(os.getcwd(), 'config_gui.json'))
+
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            value = float(cfg.get('load_power_per_unit_w', 0))
+            if value > 0:
+                print(f"  [LOAD] load_power_per_unit_w={value}W from {path}")
+                return value
+        except Exception:
+            continue
+    return LOAD_PER_GROUP_W
+
+
 def perform_pre_measure_for_decision(
     data_file: str,
     command_file: str,
@@ -1013,6 +1069,226 @@ def perform_pre_measure_for_decision(
     if recovery_seconds > 0:
         sleep_fn(float(recovery_seconds))
     return read_data_txt(data_file, battery_pp=battery_pp)
+
+
+@dataclass
+class PreMeasureResult:
+    reading: Optional[Reading]
+    samples: List[Reading]
+    stable: bool
+    ready_for_probe: bool
+    confirmed_undervoltage: bool
+    recovering: bool
+    elapsed_seconds: float
+    reason: str
+
+
+@dataclass
+class ProbeDischargeResult:
+    passed: bool
+    attempted: bool
+    reading: Optional[Reading]
+    samples: List[Reading]
+    baseline_voltage_v: float
+    minimum_voltage_v: float
+    voltage_drop_v: float
+    command_power_mw: int
+    reason: str
+
+
+def _voltage_is_stable(samples: List[Reading], sample_count: int,
+                       tolerance_v: float) -> bool:
+    valid = [sample.batt_v for sample in samples if sample.batt_v > 0]
+    if len(valid) < max(1, sample_count):
+        return False
+    recent = valid[-max(1, sample_count):]
+    return (max(recent) - min(recent)) <= max(0.0, tolerance_v)
+
+
+def perform_stable_pre_measure_for_decision(
+    data_file: str,
+    command_file: str,
+    battery_pp: str,
+    load_count: int,
+    minimum_seconds: float = VOLTAGE_RECOVERY_SECONDS,
+    maximum_seconds: float = PRE_MEASURE_MAX_SECONDS,
+    sample_seconds: float = PRE_MEASURE_SAMPLE_SECONDS,
+    stable_samples: int = PRE_MEASURE_STABLE_SAMPLES,
+    stable_tolerance_v: float = PRE_MEASURE_STABLE_TOLERANCE_V,
+    cutoff_v: float = BATTERY_CUTOFF_V,
+    sleep_fn=time.sleep,
+    monotonic_fn=time.monotonic,
+    read_fn=None,
+    dry_run: bool = False,
+) -> PreMeasureResult:
+    """Observe the recovery curve and only classify fresh, stable voltage data."""
+    if read_fn is None:
+        read_fn = read_data_txt
+    minimum_seconds = max(0.0, float(minimum_seconds))
+    maximum_seconds = max(minimum_seconds, float(maximum_seconds))
+    sample_seconds = max(0.1, float(sample_seconds))
+
+    now_ts = datetime.now(TZ_UTC8)
+    if not dry_run:
+        write_pre_measure_command(
+            command_file, now_ts, battery_pp, load_count=load_count
+        )
+
+    started = monotonic_fn()
+    samples: List[Reading] = []
+    seen_timestamps = set()
+    while True:
+        elapsed = max(0.0, monotonic_fn() - started)
+        if elapsed >= maximum_seconds:
+            break
+        sleep_fn(min(sample_seconds, maximum_seconds - elapsed))
+        elapsed = max(0.0, monotonic_fn() - started)
+        reading = read_fn(data_file, battery_pp=battery_pp)
+        if reading is not None:
+            timestamp_key = reading.timestamp.isoformat()
+            if timestamp_key not in seen_timestamps:
+                seen_timestamps.add(timestamp_key)
+                samples.append(reading)
+                print(
+                    f"  [pre-measure] t={elapsed:.1f}s "
+                    f"V={reading.batt_v:.2f}V I={reading.batt_i_ma:.0f}mA"
+                )
+
+        stable = _voltage_is_stable(
+            samples, stable_samples, stable_tolerance_v
+        )
+        if elapsed >= minimum_seconds and stable:
+            break
+
+    elapsed = max(0.0, monotonic_fn() - started)
+    latest = samples[-1] if samples else None
+    stable = _voltage_is_stable(samples, stable_samples, stable_tolerance_v)
+    valid_voltages = [sample.batt_v for sample in samples if sample.batt_v > 0]
+    recovering = (
+        len(valid_voltages) >= 2
+        and valid_voltages[-1] > valid_voltages[0] + stable_tolerance_v
+        and not stable
+    )
+    ready_for_probe = bool(
+        latest is not None and latest.batt_v >= cutoff_v and stable
+    )
+    confirmed_undervoltage = bool(
+        latest is not None
+        and latest.batt_v < cutoff_v
+        and stable
+        and len(valid_voltages) >= max(1, stable_samples)
+    )
+    if ready_for_probe:
+        reason = "stable_above_cutoff"
+    elif confirmed_undervoltage:
+        reason = "stable_below_cutoff"
+    elif recovering:
+        reason = "voltage_still_recovering"
+    elif latest is None:
+        reason = "no_fresh_reading"
+    else:
+        reason = "voltage_not_stable"
+
+    return PreMeasureResult(
+        reading=latest,
+        samples=samples,
+        stable=stable,
+        ready_for_probe=ready_for_probe,
+        confirmed_undervoltage=confirmed_undervoltage,
+        recovering=recovering,
+        elapsed_seconds=elapsed,
+        reason=reason,
+    )
+
+
+def perform_probe_discharge(
+    data_file: str,
+    command_file: str,
+    battery_pp: str,
+    load_count: int,
+    load_power_per_unit_w: float,
+    baseline_voltage_v: float,
+    requested_power_mw: int = PROBE_DISCHARGE_POWER_MW,
+    duration_seconds: float = PROBE_DISCHARGE_SECONDS,
+    sample_seconds: float = PROBE_SAMPLE_SECONDS,
+    cutoff_v: float = BATTERY_CUTOFF_V,
+    max_drop_v: float = PROBE_MAX_VOLTAGE_DROP_V,
+    sleep_fn=time.sleep,
+    monotonic_fn=time.monotonic,
+    read_fn=None,
+    dry_run: bool = False,
+) -> ProbeDischargeResult:
+    """Run a hardware-aligned battery-only probe and stop on the first unsafe sample."""
+    if read_fn is None:
+        read_fn = read_data_txt
+    solo_load_mw = int(math.ceil(
+        max(0, load_count) * max(0.0, load_power_per_unit_w) * 1000.0
+    ))
+    command_power_mw = max(int(requested_power_mw), solo_load_mw)
+    command_power_mw = min(
+        command_power_mw, int(round(BATTERY_DISCHARGE_PMAX_KW * 1e6))
+    )
+    if dry_run:
+        return ProbeDischargeResult(
+            passed=True, attempted=False, reading=None, samples=[],
+            baseline_voltage_v=baseline_voltage_v,
+            minimum_voltage_v=baseline_voltage_v, voltage_drop_v=0.0,
+            command_power_mw=command_power_mw, reason="dry_run",
+        )
+
+    write_command_simple(
+        command_file, 1, datetime.now(TZ_UTC8), battery_pp,
+        command_power_mw, int(round(FLOW_MIN_ACTIVE_PCT)),
+        load_count=load_count,
+    )
+    started = monotonic_fn()
+    samples: List[Reading] = []
+    passed = True
+    reason = "stable"
+    minimum_voltage_v = baseline_voltage_v
+    latest = None
+    try:
+        while monotonic_fn() - started < max(0.0, duration_seconds):
+            remaining = duration_seconds - (monotonic_fn() - started)
+            sleep_fn(min(max(0.1, sample_seconds), max(0.0, remaining)))
+            latest = read_fn(data_file, battery_pp=battery_pp)
+            if latest is None or latest.batt_v <= 0:
+                continue
+            samples.append(latest)
+            minimum_voltage_v = min(minimum_voltage_v, latest.batt_v)
+            voltage_drop_v = max(0.0, baseline_voltage_v - latest.batt_v)
+            print(
+                f"  [probe] V={latest.batt_v:.2f}V "
+                f"drop={voltage_drop_v:.2f}V"
+            )
+            if latest.batt_v < cutoff_v:
+                passed = False
+                reason = "below_cutoff"
+                break
+            if voltage_drop_v > max_drop_v:
+                passed = False
+                reason = "excessive_voltage_drop"
+                break
+        if not samples:
+            passed = False
+            reason = "no_valid_reading"
+    finally:
+        write_standby_rest_command(
+            command_file, datetime.now(TZ_UTC8), battery_pp,
+            load_count=load_count,
+        )
+
+    return ProbeDischargeResult(
+        passed=passed,
+        attempted=True,
+        reading=latest,
+        samples=samples,
+        baseline_voltage_v=baseline_voltage_v,
+        minimum_voltage_v=minimum_voltage_v,
+        voltage_drop_v=max(0.0, baseline_voltage_v - minimum_voltage_v),
+        command_power_mw=command_power_mw,
+        reason=reason,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1039,7 +1315,8 @@ class DeploymentLogger:
         'n_samples', 'completeness',
         'action_power_kw', 'action_flow_pct',
         'power_mw_cmd', 'flow_pct_cmd', 'situation_code',
-        'load_groups', 'pv_surplus_kw', 'guard_delta_mW',
+        'load_groups', 'vendor_load_count', 'load_power_per_unit_w', 'load_power_est_w',
+        'pv_surplus_kw', 'guard_delta_mW',
         'guard_force_charge_low_soc', 'guard_block_low_soc_discharge',
         'guard_block_high_soc_charge', 'guard_block_pv_active_discharge',
         'guard_block_voltage_cutoff', 'warn_load_over_discharge_limit',
@@ -1051,6 +1328,11 @@ class DeploymentLogger:
         'guard_block_health_lock_discharge',
         'firmware_override_discharge_samples_window',
         'isolated_load_bus_samples_window',
+        'pre_measure_status', 'pre_measure_samples', 'pre_measure_duration_sec',
+        'pre_measure_stable', 'pre_measure_voltage_v',
+        'probe_attempted', 'probe_passed', 'probe_reason',
+        'probe_power_mw', 'probe_min_voltage_v', 'probe_voltage_drop_v',
+        'voltage_confirmation_pending',
         'voltage_cutoff_active', 'voltage_cutoff_day_locked', 'voltage_cutoff_day_count',
         'cutoff_soc_fallback_enabled', 'cutoff_soc_fallback_percent',
         'cutoff_soc_fallback_applied', 'cutoff_soc_before', 'cutoff_soc_after',
@@ -1126,6 +1408,9 @@ class RawDataLogger:
         'grid_v',
         'grid_i_ma',
         'grid_p_mw',
+        'vendor_load_count',
+        'load_power_per_unit_w',
+        'load_power_est_w',
         'soc_calc',
         'soc_unclamped',
         'soc_coulomb',
@@ -1169,10 +1454,16 @@ class RawDataLogger:
             charge_mah: float, discharge_mah: float,
             situation_code: int, battery_pp: str,
             soc_coulomb: float = 0.0, soc_coulomb_unclamped: float = 0.0,
-            charge_wh: float = 0.0, discharge_wh: float = 0.0):
+            charge_wh: float = 0.0, discharge_wh: float = 0.0,
+            load_power_per_unit_w: float = LOAD_PER_GROUP_W):
         """Documentation for this public API is provided in English."""
         date_str = reading.timestamp.strftime('%Y-%m-%d')
         self._open_for_date(date_str)
+        vendor_lc = reading.vendor_load_count
+        load_est_w = (
+            float(vendor_lc) * float(load_power_per_unit_w)
+            if vendor_lc is not None else ''
+        )
         self._writer.writerow({
             'timestamp': reading.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
             'battery_id': battery_pp,
@@ -1198,6 +1489,9 @@ class RawDataLogger:
             'grid_v': f'{reading.grid_v:.2f}',
             'grid_i_ma': f'{reading.grid_i_ma:.1f}',
             'grid_p_mw': f'{reading.grid_p_mw:.1f}',
+            'vendor_load_count': '' if vendor_lc is None else int(vendor_lc),
+            'load_power_per_unit_w': f'{float(load_power_per_unit_w):.4f}',
+            'load_power_est_w': '' if load_est_w == '' else f'{load_est_w:.4f}',
             'soc_calc': f'{soc_calc:.4f}',
             'soc_unclamped': f'{soc_unclamped:.4f}',
             'soc_coulomb': f'{soc_coulomb:.4f}',
@@ -1237,7 +1531,19 @@ def main():
                         help="Data.txt 輪詢間隔（秒），預設 10")
     parser.add_argument("--voltage-recovery-sec", type=float,
                         default=VOLTAGE_RECOVERY_SECONDS,
-                        help="每次模型決策前 mode 3 / 50%% pre-measure 等待秒數，預設 25，可用 P302_VOLTAGE_RECOVERY_SECONDS 覆寫")
+                        help="每次模型決策前 mode 3 / 50%% pre-measure 最短秒數，預設 25，可用 P302_VOLTAGE_RECOVERY_SECONDS 覆寫")
+    parser.add_argument("--pre-measure-sample-sec", type=float,
+                        default=PRE_MEASURE_SAMPLE_SECONDS,
+                        help="pre-measure 取樣間隔秒數，預設 2.5")
+    parser.add_argument("--pre-measure-max-sec", type=float,
+                        default=PRE_MEASURE_MAX_SECONDS,
+                        help="pre-measure 最長秒數，預設 90")
+    parser.add_argument("--probe-power-mw", type=int,
+                        default=PROBE_DISCHARGE_POWER_MW,
+                        help="安全試放最低功率 mW；若負載較高會提升至可獨立供電，預設 150")
+    parser.add_argument("--probe-sec", type=float,
+                        default=PROBE_DISCHARGE_SECONDS,
+                        help="安全試放持續秒數，預設 10")
     parser.add_argument("--window-min", type=int, default=15,
                         help="聚合窗格（分鐘），預設 15")
     parser.add_argument("--device", type=str, default="cpu",
@@ -1332,7 +1638,12 @@ def main():
     parser.add_argument("--no-soh-use-for-capacity", dest="soh_use_for_capacity",
                         action="store_false",
                         help="不把 SoH prediction 套進 SoC 容量計算")
+    parser.add_argument("--load-power-per-unit-w", type=float, default=None,
+                        help="每組負載功率（W），用於 vendor_load_count × 功率估算；"
+                             "未指定時讀 config_gui.json 的 load_power_per_unit_w，預設 0.1")
     args = parser.parse_args()
+    load_power_per_unit_w = _resolve_load_power_per_unit_w(args.load_power_per_unit_w)
+    args.load_power_per_unit_w = load_power_per_unit_w
     model_path_resolved = Path(args.model_path).resolve()
     session_id = datetime.now(TZ_UTC8).strftime('%Y%m%d_%H%M%S')
     experiment_name = model_path_resolved.parents[1].name if len(model_path_resolved.parents) >= 2 else model_path_resolved.stem
@@ -1346,7 +1657,8 @@ def main():
           f"{BATTERY_CHARGE_V}V(charge) / {BATTERY_DISCHARGE_V}V(discharge) / {BATTERY_CUTOFF_V}V(cutoff)")
     print(f"  Charge voltage cutoff: {BATTERY_CHARGE_CUTOFF_V:.2f}V")
     print(f"  Discharge intent threshold: {DISCHARGE_INTENT_THRESHOLD_KW*1000:.2f}W")
-    print(f"  Load: {MAX_LOAD_GROUPS} groups x {LOAD_PER_GROUP_W}W = {MAX_LOAD_GROUPS*LOAD_PER_GROUP_W}W")
+    print(f"  Load: {MAX_LOAD_GROUPS} groups x {load_power_per_unit_w}W = {MAX_LOAD_GROUPS*load_power_per_unit_w}W")
+    print("  CSV will record vendor_load_count from Data.txt header and load_power_est_w = count x per-unit W")
     print("  CORAL: CRTSN + OCC + Adaptive Loop")
     print(
         f"  Cutoff SoC fallback: "
@@ -1392,7 +1704,7 @@ def main():
     model_flow_power_min_fraction = float(np.clip(model_env_cfg.get("flow_power_min_fraction", 0.0), 0.0, 1.0))
     model_flow_min_pct = float(model_env_cfg.get("flow_min_active_fraction", FLOW_MIN_ACTIVE_PCT / 100.0)) * 100.0
     model_group_power_kw = model_env_cfg.get("deployment_group_power_kw", None)
-    current_group_power_kw = LOAD_PER_GROUP_W / 1000.0
+    current_group_power_kw = load_power_per_unit_w / 1000.0
     print(f"  Action dimension: {action_dim} ({'power+flow' if is_2d else 'power only'})")
     print(f"  Model architecture: state_dim={model_state_dim}, hidden_dim={model_hidden_dim}")
     print(
@@ -1555,6 +1867,7 @@ def main():
     voltage_cutoff_day_locked = False
     voltage_cutoff_day_date: Optional[object] = None
     voltage_zero_streak = 0
+    voltage_confirmation_pending = False
     voltage_cutoff_fallback_applied_this_event = False
     cutoff_soc_fallback_applied_window = 0
     cutoff_soc_before_window: Optional[float] = None
@@ -1598,6 +1911,52 @@ def main():
             f"{before*100:.1f}% -> {after*100:.1f}%"
         )
 
+    def _force_standby(at_time: Optional[datetime] = None):
+        nonlocal last_sit_code, last_power_w, last_flow_pct, last_action_kw
+        last_sit_code = STANDBY_SITUATION_CODE
+        last_power_w = 0.0
+        last_flow_pct = FLOW_REST_PCT
+        last_action_kw = 0.0
+        if not args.dry_run:
+            command_time = at_time or datetime.now(TZ_UTC8)
+            write_standby_rest_command(
+                args.command_file, command_time, pp,
+                load_count=get_load_groups(command_time.time()),
+            )
+
+    def _confirm_voltage_cutoff(trigger: str, voltage_v: float,
+                                at_time: Optional[datetime] = None) -> bool:
+        nonlocal voltage_cutoff_active, voltage_cutoff_time
+        nonlocal voltage_cutoff_count, voltage_cutoff_day_count
+        nonlocal voltage_cutoff_day_locked, voltage_confirmation_pending
+        if voltage_cutoff_active:
+            _force_standby(at_time)
+            return False
+        event_time = at_time or datetime.now(TZ_UTC8)
+        voltage_cutoff_active = True
+        voltage_cutoff_time = event_time
+        voltage_cutoff_count += 1
+        voltage_cutoff_day_count += 1
+        voltage_confirmation_pending = False
+        print(
+            f"\n  !! 已確認電壓截止 #{voltage_cutoff_count} ({trigger}) !! "
+            f"V={voltage_v:.2f}V "
+            f"-> 強制待機 (今日 {voltage_cutoff_day_count}/{CUTOFF_MAX_PER_DAY})"
+        )
+        print(
+            f"     恢復條件: V >= {BATTERY_CUTOFF_RECOVER_V}V "
+            f"+ 冷卻 {CUTOFF_COOLDOWN_SEC}s"
+        )
+        _apply_cutoff_soc_fallback(trigger)
+        _force_standby(event_time)
+        if voltage_cutoff_day_count >= CUTOFF_MAX_PER_DAY:
+            voltage_cutoff_day_locked = True
+            print(
+                f"  !! 今日確認截止次數 {voltage_cutoff_day_count} 達上限 "
+                "-> 整天鎖定 standby"
+            )
+        return True
+
     print(f"\n  Data.txt  : {args.data_file}")
     print(f"  Command   : {args.command_file}")
     print(f"  模型      : {args.model_path}")
@@ -1608,7 +1967,10 @@ def main():
     print(f"  初始 SoC  : {args.initial_soc * 100:.0f}%")
     print(f"  輪詢間隔  : {args.poll_sec}s")
     print(f"  Pre-measure: mode {PRE_MEASURE_SITUATION_CODE}, power=0mW, "
-          f"flow={FLOW_PRE_MEASURE_PCT:.0f}%, wait={args.voltage_recovery_sec:.1f}s")
+          f"flow={FLOW_PRE_MEASURE_PCT:.0f}%, min={args.voltage_recovery_sec:.1f}s, "
+          f"max={args.pre_measure_max_sec:.1f}s, sample={args.pre_measure_sample_sec:.1f}s")
+    print(f"  Probe: min={args.probe_power_mw}mW, duration={args.probe_sec:.1f}s, "
+          f"flow={FLOW_MIN_ACTIVE_PCT:.0f}%, max_drop={PROBE_MAX_VOLTAGE_DROP_V:.2f}V")
     print(f"  Rest mode  : mode {STANDBY_SITUATION_CODE}, power=0mW, "
           f"flow={FLOW_REST_PCT:.0f}%")
     print(f"  聚合窗格  : {args.window_min} min")
@@ -1665,8 +2027,8 @@ def main():
                         ratio = min(last_power_w / max_power_w, 1.0) if max_power_w > 0 else 0.0
                         reading.batt_i_ma = args.synthetic_current_ma * ratio
                     elif last_sit_code == 1:
-                        load_w = get_load_groups(now.time()) * LOAD_PER_GROUP_W  # e.g. 4 × 2.5W = 10W
-                        discharge_ma = load_w / BATTERY_DISCHARGE_V * 1000.0  # e.g. 10/5.6*1000 ≈ 1786 mA
+                        load_w = get_load_groups(now.time()) * load_power_per_unit_w
+                        discharge_ma = load_w / BATTERY_DISCHARGE_V * 1000.0
                         reading.batt_i_ma = -discharge_ma
                     else:
                         reading.batt_i_ma = 0.0
@@ -1755,6 +2117,7 @@ def main():
                     soc_coulomb_unclamped=soc_stats['soc_coulomb_unclamped'],
                     charge_wh=soc_stats['total_charge_wh'],
                     discharge_wh=soc_stats['total_discharge_wh'],
+                    load_power_per_unit_w=load_power_per_unit_w,
                 )
 
                 if reading.batt_v == 0.0 and raw_i_orig == 0.0:
@@ -1779,22 +2142,11 @@ def main():
                     voltage_cutoff_day_date = _today
                     voltage_cutoff_day_count = 0
                     voltage_cutoff_day_locked = False
+                    voltage_confirmation_pending = False
 
-                voltage_observation_reliable = (
-                    abs(last_power_w) > 0.0
-                    or last_flow_pct >= FLOW_PRE_MEASURE_PCT
+                active_discharge_observation = (
+                    last_sit_code == 1 and abs(last_power_w) > 0.0
                 )
-
-                def _force_standby():
-                    nonlocal last_sit_code, last_power_w, last_flow_pct, last_action_kw
-                    last_sit_code = STANDBY_SITUATION_CODE
-                    last_power_w = 0.0
-                    last_flow_pct = FLOW_REST_PCT
-                    last_action_kw = 0.0
-                    write_standby_rest_command(
-                        args.command_file, _now_dt, pp,
-                        load_count=get_load_groups(now.time()),
-                    )
 
                 # ── SoH-aware passive monitor / optional health lock ─────
                 # Always record low-voltage evidence. Only the explicit optional
@@ -1848,42 +2200,42 @@ def main():
                         _force_standby()
 
                 if voltage_cutoff_day_locked:
-                    _force_standby()
-                elif reading.batt_v > 0 and voltage_observation_reliable:
-                    voltage_zero_streak = 0
-                    if reading.batt_v < BATTERY_CUTOFF_V and not voltage_cutoff_active:
-                        voltage_cutoff_active = True
-                        voltage_cutoff_time = _now_dt
-                        voltage_cutoff_count += 1
-                        voltage_cutoff_day_count += 1
-                        print(f"\n  !! 電壓截止 #{voltage_cutoff_count} !! "
-                              f"V={reading.batt_v:.2f}V < {BATTERY_CUTOFF_V}V "
-                              f"-> 強制待機 (今日 {voltage_cutoff_day_count}/{CUTOFF_MAX_PER_DAY})")
-                        print(f"     恢復條件: V >= {BATTERY_CUTOFF_RECOVER_V}V "
-                              f"+ 冷卻 {CUTOFF_COOLDOWN_SEC}s")
-                        _apply_cutoff_soc_fallback("realtime")
-                        _force_standby()
-                        if voltage_cutoff_day_count >= CUTOFF_MAX_PER_DAY:
-                            voltage_cutoff_day_locked = True
-                            print(f"  !! 今日截止次數 {voltage_cutoff_day_count} 達上限 "
-                                  f"-> 整天鎖定 standby，電池疑似退化！")
-                    elif voltage_cutoff_active:
+                    _force_standby(_now_dt)
+                elif voltage_cutoff_active:
+                    if reading.batt_v > 0:
                         cooldown_ok = (
                             voltage_cutoff_time is not None
                             and (_now_dt - voltage_cutoff_time).total_seconds()
                             >= CUTOFF_COOLDOWN_SEC
                         )
-                        if (reading.batt_v >= BATTERY_CUTOFF_RECOVER_V
-                                and cooldown_ok):
+                        if (
+                            reading.batt_v >= BATTERY_CUTOFF_RECOVER_V
+                            and cooldown_ok
+                            and last_flow_pct >= FLOW_PRE_MEASURE_PCT
+                        ):
                             voltage_cutoff_active = False
                             voltage_cutoff_fallback_applied_this_event = False
-                            print(f"\n  電壓恢復: V={reading.batt_v:.2f}V >= "
-                                  f"{BATTERY_CUTOFF_RECOVER_V}V, "
-                                  f"冷卻 {CUTOFF_COOLDOWN_SEC}s 已過, 解除截止")
-                        else:
-                            if last_sit_code in (1, 2):
-                                _force_standby()
-                elif voltage_observation_reliable:
+                            print(
+                                f"\n  電壓恢復: V={reading.batt_v:.2f}V >= "
+                                f"{BATTERY_CUTOFF_RECOVER_V}V, "
+                                f"冷卻 {CUTOFF_COOLDOWN_SEC}s 已過, 解除截止"
+                            )
+                    if voltage_cutoff_active and last_sit_code in (1, 2):
+                        _force_standby(_now_dt)
+                elif (
+                    reading.batt_v > 0
+                    and active_discharge_observation
+                    and reading.batt_v < BATTERY_CUTOFF_V
+                ):
+                    voltage_zero_streak = 0
+                    voltage_confirmation_pending = True
+                    print(
+                        f"\n  !! 放電中低壓 V={reading.batt_v:.2f}V "
+                        f"< {BATTERY_CUTOFF_V:.2f}V：立即停止，等待穩定量測確認；"
+                        "暫不計入每日截止"
+                    )
+                    _force_standby(_now_dt)
+                elif active_discharge_observation and reading.batt_v <= 0:
                     voltage_zero_streak += 1
                     if voltage_zero_streak == CUTOFF_ZERO_V_STREAK:
                         print(
@@ -1914,16 +2266,20 @@ def main():
                 print(
                     f"\n  [pre-measure] mode {PRE_MEASURE_SITUATION_CODE}, "
                     f"PP={pp}, power=0mW, flow={FLOW_PRE_MEASURE_PCT:.0f}% "
-                    f"for {args.voltage_recovery_sec:.1f}s before decision"
+                    f"for {args.voltage_recovery_sec:.1f}-"
+                    f"{args.pre_measure_max_sec:.1f}s before decision"
                 )
-                fresh_reading = perform_pre_measure_for_decision(
+                pre_measure_result = perform_stable_pre_measure_for_decision(
                     args.data_file,
                     args.command_file,
                     battery_pp=pp,
                     load_count=decision_load_groups,
-                    recovery_seconds=max(0.0, float(args.voltage_recovery_sec)),
+                    minimum_seconds=max(0.0, float(args.voltage_recovery_sec)),
+                    maximum_seconds=max(0.0, float(args.pre_measure_max_sec)),
+                    sample_seconds=max(0.1, float(args.pre_measure_sample_sec)),
                     dry_run=args.dry_run,
                 )
+                fresh_reading = pre_measure_result.reading
                 if fresh_reading is not None:
                     reading = fresh_reading
                     buffer.add(fresh_reading)
@@ -1938,8 +2294,42 @@ def main():
                         f"I={fresh_reading.batt_i_ma:.0f}mA "
                         f"MPPT={fresh_reading.mppt_p_mw:.0f}mW"
                     )
+                    print(
+                        f"  [pre-measure] status={pre_measure_result.reason}, "
+                        f"samples={len(pre_measure_result.samples)}, "
+                        f"elapsed={pre_measure_result.elapsed_seconds:.1f}s"
+                    )
+                    if pre_measure_result.confirmed_undervoltage:
+                        _confirm_voltage_cutoff(
+                            "stable_pre_measure",
+                            fresh_reading.batt_v,
+                            datetime.now(TZ_UTC8),
+                        )
+                    elif pre_measure_result.ready_for_probe:
+                        voltage_confirmation_pending = False
+                        if voltage_cutoff_active:
+                            cooldown_ok = (
+                                voltage_cutoff_time is not None
+                                and (
+                                    datetime.now(TZ_UTC8) - voltage_cutoff_time
+                                ).total_seconds() >= CUTOFF_COOLDOWN_SEC
+                            )
+                            if (
+                                fresh_reading.batt_v >= BATTERY_CUTOFF_RECOVER_V
+                                and cooldown_ok
+                            ):
+                                voltage_cutoff_active = False
+                                voltage_cutoff_fallback_applied_this_event = False
+                                print("  [pre-measure] confirmed cutoff recovery")
+                    elif fresh_reading.batt_v < BATTERY_CUTOFF_V:
+                        voltage_confirmation_pending = True
+                        print(
+                            "  [pre-measure] 電壓仍在回升或尚未穩定；"
+                            "本次不 latch、不累計，並禁止放電"
+                        )
                 else:
                     print("  [pre-measure] fresh Data.txt not available; using latest buffered data")
+                    voltage_confirmation_pending = True
 
                 step_count += 1
                 print(f"\n{'='*60}")
@@ -2092,6 +2482,12 @@ def main():
                 guard_block_firmware_override_discharge = 0
                 guard_block_isolated_load_bus_discharge = 0
                 guard_block_health_lock_discharge = 0
+                probe_attempted = 0
+                probe_passed = 0
+                probe_reason = "not_requested"
+                probe_power_mw = 0
+                probe_min_voltage_v = 0.0
+                probe_voltage_drop_v = 0.0
 
                 coral_clipped = False
                 coral_delta_kw = 0.0
@@ -2214,19 +2610,19 @@ def main():
                         action_kw = 0.0
                         guard_block_voltage_cutoff = 1
                         print(f"  !! 電壓截止中 (V={latest_batt_v:.2f}V)，禁止放電")
-                elif latest_batt_v > 0 and latest_batt_v < BATTERY_CUTOFF_V and action_kw < 0:
+                elif (
+                    action_kw < 0
+                    and (
+                        voltage_confirmation_pending
+                        or not pre_measure_result.ready_for_probe
+                    )
+                ):
                     action_kw = 0.0
-                    voltage_cutoff_active = True
-                    voltage_cutoff_time = datetime.now(TZ_UTC8)
-                    voltage_cutoff_count += 1
-                    voltage_cutoff_day_count += 1
                     guard_block_voltage_cutoff = 1
-                    print(f"  !! 電壓截止 ({latest_batt_v:.2f}V < {BATTERY_CUTOFF_V}V)，禁止放電")
-                    _apply_cutoff_soc_fallback("decision")
-                    soc = soc_tracker.get_soc()
-                    if voltage_cutoff_day_count >= CUTOFF_MAX_PER_DAY:
-                        voltage_cutoff_day_locked = True
-                        print(f"  !! 今日截止達上限 -> 整天鎖定 standby")
+                    print(
+                        "  !! pre-measure 尚未確認電壓穩定且安全，"
+                        "本次禁止放電但不計入每日截止"
+                    )
 
                 if action_kw < -DISCHARGE_INTENT_THRESHOLD_KW:
                     solo_target_kw = min(load_kw, BATTERY_DISCHARGE_PMAX_KW)
@@ -2241,6 +2637,48 @@ def main():
                     action_kw = 0.0
                     guard_block_invalid_discharge = 1
                     print("  ⚠ 放電無法獨立接管負載（Grid Support 已禁用），改為待機")
+
+                if action_kw < -DISCHARGE_INTENT_THRESHOLD_KW:
+                    print(
+                        f"  [probe] 開始安全試放：最低 {args.probe_power_mw}mW、"
+                        f"{args.probe_sec:.1f}s；實際功率會覆蓋完整負載"
+                    )
+                    probe_result = perform_probe_discharge(
+                        args.data_file,
+                        args.command_file,
+                        battery_pp=pp,
+                        load_count=decision_load_groups,
+                        load_power_per_unit_w=load_power_per_unit_w,
+                        baseline_voltage_v=latest_batt_v,
+                        requested_power_mw=max(1, int(args.probe_power_mw)),
+                        duration_seconds=max(0.1, float(args.probe_sec)),
+                        dry_run=args.dry_run,
+                    )
+                    probe_attempted = 1 if probe_result.attempted else 0
+                    probe_passed = 1 if probe_result.passed else 0
+                    probe_reason = probe_result.reason
+                    probe_power_mw = probe_result.command_power_mw
+                    probe_min_voltage_v = probe_result.minimum_voltage_v
+                    probe_voltage_drop_v = probe_result.voltage_drop_v
+                    if not probe_result.passed:
+                        action_kw = 0.0
+                        guard_block_voltage_cutoff = 1
+                        failed_voltage = (
+                            probe_result.reading.batt_v
+                            if probe_result.reading is not None
+                            else probe_result.minimum_voltage_v
+                        )
+                        _confirm_voltage_cutoff(
+                            f"probe_{probe_result.reason}",
+                            failed_voltage,
+                            datetime.now(TZ_UTC8),
+                        )
+                        soc = soc_tracker.get_soc()
+                    else:
+                        print(
+                            f"  [probe] PASS: min={probe_result.minimum_voltage_v:.2f}V, "
+                            f"drop={probe_result.voltage_drop_v:.2f}V"
+                        )
 
                 flow_pct = apply_flow_operating_rule(flow_pct, active=abs(action_kw) > 0.0001)
                 if model_flow_limits_available_power and abs(action_kw) > 0.0001:
@@ -2358,6 +2796,15 @@ def main():
                     'flow_pct_cmd': f'{flow_pct:.1f}',
                     'situation_code': sit_code,
                     'load_groups': load_groups,
+                    'vendor_load_count': (
+                        '' if agg.get('vendor_load_count') is None
+                        else int(agg['vendor_load_count'])
+                    ),
+                    'load_power_per_unit_w': f'{load_power_per_unit_w:.4f}',
+                    'load_power_est_w': (
+                        '' if agg.get('vendor_load_count') is None
+                        else f'{int(agg["vendor_load_count"]) * load_power_per_unit_w:.4f}'
+                    ),
                     'pv_surplus_kw': f'{pv_surplus_kw:.8f}',
                     'guard_delta_mW': f'{guard_delta_mw:.2f}',
                     'guard_force_charge_low_soc': guard_force_charge_low_soc,
@@ -2377,6 +2824,21 @@ def main():
                     'guard_block_health_lock_discharge': guard_block_health_lock_discharge,
                     'firmware_override_discharge_samples_window': firmware_override_discharge_samples_window,
                     'isolated_load_bus_samples_window': isolated_load_bus_samples_window,
+                    'pre_measure_status': pre_measure_result.reason,
+                    'pre_measure_samples': len(pre_measure_result.samples),
+                    'pre_measure_duration_sec': f'{pre_measure_result.elapsed_seconds:.1f}',
+                    'pre_measure_stable': 1 if pre_measure_result.stable else 0,
+                    'pre_measure_voltage_v': (
+                        f'{pre_measure_result.reading.batt_v:.3f}'
+                        if pre_measure_result.reading is not None else ''
+                    ),
+                    'probe_attempted': probe_attempted,
+                    'probe_passed': probe_passed,
+                    'probe_reason': probe_reason,
+                    'probe_power_mw': probe_power_mw,
+                    'probe_min_voltage_v': f'{probe_min_voltage_v:.3f}',
+                    'probe_voltage_drop_v': f'{probe_voltage_drop_v:.3f}',
+                    'voltage_confirmation_pending': 1 if voltage_confirmation_pending else 0,
                     'voltage_cutoff_active': 1 if voltage_cutoff_active else 0,
                     'voltage_cutoff_day_locked': 1 if voltage_cutoff_day_locked else 0,
                     'voltage_cutoff_day_count': voltage_cutoff_day_count,

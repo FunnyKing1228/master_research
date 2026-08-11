@@ -87,6 +87,7 @@ P302_DEFAULTS = {
     "soh_model_path": _default_soh_model_path(),
     "initial_soc": 20.0,
     "load_count": 4,
+    "load_power_per_unit_w": 0.1,
     "log_dir": _default_log_dir(),
     "device": "cpu",
     "poll_sec": 10.0,
@@ -533,7 +534,15 @@ class AIControlGUI(tk.Tk):
         self.load_count_var = tk.StringVar(value=str(self.config.get("load_count", 4)))
         ttk.Spinbox(row_load, from_=0, to=4, textvariable=self.load_count_var,
                      width=5).pack(side="left", padx=4)
-        ttk.Label(row_load, text="(顯示暫沿用每組約 0.1W；0.58W/燈條對齊待後續處理；AI 模式依 load_pattern.txt 排程)").pack(side="left")
+        ttk.Label(row_load, text="每組功率(W):").pack(side="left", padx=(12, 0))
+        self.load_power_per_unit_w_var = tk.StringVar(
+            value=str(self.config.get("load_power_per_unit_w", 0.1))
+        )
+        ttk.Entry(row_load, textvariable=self.load_power_per_unit_w_var, width=6).pack(side="left", padx=4)
+        ttk.Label(
+            row_load,
+            text="(AI 組數依 load_pattern.txt；CSV 記錄 Data.txt 回報組數 × 此功率)",
+        ).pack(side="left")
 
         row_manual_scenario = ttk.Frame(frm_common)
         row_manual_scenario.pack(fill="x", padx=pad, pady=2)
@@ -755,6 +764,14 @@ class AIControlGUI(tk.Tk):
             "--soh-recovery-samples", str(soh_recovery_samples),
             "--coral",
         ]
+        try:
+            load_power_per_unit_w = float(self.load_power_per_unit_w_var.get() or 0.1)
+            if load_power_per_unit_w <= 0:
+                raise ValueError("load power must be > 0")
+        except ValueError:
+            messagebox.showerror("Error", "Invalid per-group load power (W)")
+            return None, None
+        cmd += ["--load-power-per-unit-w", str(load_power_per_unit_w)]
         if self.cutoff_soc_fallback_var.get():
             cmd.append("--cutoff-soc-fallback")
         else:
@@ -1270,6 +1287,7 @@ class AIControlGUI(tk.Tk):
             "soh_use_for_capacity": self.soh_use_for_capacity_var.get(),
             "initial_soc": float(self.initial_soc_var.get() or 50),
             "load_count": int(self.load_count_var.get() or 4),
+            "load_power_per_unit_w": float(self.load_power_per_unit_w_var.get() or 0.1),
             "log_dir": self.log_dir_var.get(),
             "device": self.device_var.get(),
             "poll_sec": float(self.poll_sec_var.get() or 10),

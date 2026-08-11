@@ -1,0 +1,111 @@
+# ═══════════════════════════════════════════════════════════════════
+# P302 SLFB v12 — Aggressive Charging + Max Power Utilization
+# ─────────────────────────────────────────────────────────────────
+# 基於 v11 (sac_v11_recent) 配置，針對部署觀察到的問題修正：
+#   1. 模型只使用 16% Pmax 充電 → 充電速度極慢（47hr 才到 25%）
+#   2. 太陽能利用不足 → 白天大太陽卻小充
+#   3. SoC 長期偏低 → 永遠無法放電套利
+#
+# v12 修改要點：
+#   - 新增 charge_shaping 區塊：可配置充電獎勵參數
+#   - solar_charge_coeff: 1.5 (原 0.8) → 太陽能充電獎勵加倍
+#   - solar_waste_penalty: 0.8 (原 0.4) → 浪費太陽能懲罰加重
+#   - low_soc_charge_thresh: 0.30 (原 0.15) → 擴大「低電量」區間
+#   - low_soc_charge_bonus: 2.5 (原 1.0) → 低 SoC 充電強獎勵
+#   - power_util_coeff: 0.6 (新增) → 獎勵使用高比例 Pmax
+#   - alpha: 0.1 (原 0.05) → 增加探索，避免陷入保守策略
+#   - tou_reward_scale: 5000 (原 7000) → 降低經濟懲罰對充電的抑制
+# ═══════════════════════════════════════════════════════════════════
+
+random_seed: 42
+
+device: "auto"
+
+env:
+  microgrid_id: 0
+  episode_length: 276
+  time_step: 0.25
+
+  battery_capacity_kwh: 0.00990
+  battery_power_kw: 0.000825
+  battery_efficiency: 0.95
+
+  use_real_data: true
+  dataset_csv_path: "data/processed/training_recent_15min.csv"
+  dataset_pv_join_wind: false
+  dataset_time_column: "timestamp"
+
+  allow_grid_trading: false
+  ramp_limit_kw: null
+  hard_guard: false
+
+  # v12: 降低 TOU scale，減少經濟信號對充電的負面影響
+  tou_reward_scale: 5000
+
+  use_flow_rate_action: true
+  flow_R_base_ohm: 10.0
+  flow_P_max_pump_W: 0.124
+  flow_k_R: 0.5
+  flow_V_OCV_charge: 8.5
+  flow_V_OCV_discharge: 5.5
+  flow_I_rated_A: 0.150
+
+  discharge_auto: true
+  voltage_cutoff_soc: 0.05
+  use_extended_obs: false
+
+# ── v12 充電獎勵調整（核心修改）──────────────────────────────────
+charge_shaping:
+  solar_charge_coeff: 1.5       # 太陽能充電獎勵（原 0.8）
+  solar_waste_penalty: 0.8      # 浪費太陽能懲罰（原 0.4）
+  low_soc_charge_thresh: 0.30   # 低電量充電區間上限（原 0.15）
+  low_soc_charge_bonus: 2.5     # 低 SoC 充電獎勵（原 1.0）
+  power_util_coeff: 0.6         # Pmax 利用率獎勵（新增）
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  # v12: 提高初始熵溫度，增加探索（避免鎖死在保守策略）
+  alpha: 0.1
+  target_entropy: -2.0
+  alpha_lr: 0.0001
+  hidden_dim: 128
+  buffer_size: 100000
+  batch_size: 256
+  warmup_steps: 2000
+  update_every: 4
+
+training:
+  total_episodes: 2000
+  max_steps: 276
+  eval_every: 25
+  eval_episodes: 3
+  save_every: 100
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 300
+  lambda_evi: 0.001
+  beta_risk: 0.5
+
+safetynet:
+  ramp_limit_kw: null
+
+conformal:
+  window: 2880
+  delta: 0.1
+
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 10
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true
