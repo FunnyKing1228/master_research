@@ -24,23 +24,14 @@ data/raw/
 - 多數現有診斷、繪圖與歷史 preprocessing script 預設直接讀 `data/raw/`，因此最安全的做法是把成對檔案放在這一層。
 - `data/raw/` 已被 Git 忽略；這些現場 CSV 只留在本機，不提交到 repository。
 
-## 開始命令
+## 接下來怎麼做
 
-先從 repository 根目錄確認目前 v22 指向的資料存在：
+1. 先確認每一天的 deployment／raw CSV 都已成對放入 `data/raw/`。
+2. 說明這批資料要用來做什麼，例如訓練、跨日驗證、問題診斷或繪圖。
+3. 由維護者或 AI 依資料欄位與目的選擇正確的處理程式；不要隨意套用歷史 script。
+4. 處理後的訓練資料放在 `data/processed/`，再由模型設定檔指定要使用哪一份。
 
-```powershell
-$cfg = Get-Content configs\experiments\p302\config_p302_v22_flow_power_limited.yaml -Raw
-Test-Path data\processed\training_v20_0511_strict_clean_full_days_raw_only.csv
-```
-
-前處理沒有單一通用一鍵命令；先依來源 schema 與目的選腳本。若原檔符合通用欄位別名，可明示輸入、輸出執行：
-
-```powershell
-py data\scripts\preprocessing\preprocess_raw_to_15min.py `
-  --input <本機原始CSV> `
-  --output data\processed\<新資料集>.csv `
-  --window_min 15
-```
+實際檢查命令、script 選擇與欄位限制統一記錄在 [`README_AI.md`](README_AI.md)，不放在人員操作首頁。
 
 ## 輸入
 
