@@ -1,51 +1,40 @@
-# 實驗目錄使用說明
+# 實驗資料夾
 
-本頁是人員操作簡版；AI／維護者請讀 [`README_AI.md`](README_AI.md)。
+`experiments/` 用來保存每次模型訓練與後續驗證產生的本機資料。
 
-## 用途
+## 什麼是一個實驗？
 
-`experiments/` 保存本機訓練與驗證產物，例如封存設定、log、checkpoint、單日及連續多日結果。這些產物預設不進 Git；可攜的實驗定義應放在 `configs/`，代表狀態則登記於 [`docs/handover/experiment_inventory.md`](../docs/handover/experiment_inventory.md)。
+執行一次模型訓練，並指定一個新的實驗名稱，就會建立：
 
-目前候選必須依序通過單日、連續 3 日與連續 5 日 rollout。單日只可作 behavior check；3/5 日若有 SoC 漂移、跨日退化或硬體語意錯誤，即不得稱為 thesis-ready。
-
-## 開始命令
-
-從 repository 根目錄執行；日期與 dataset 必須換成實際存在且連續的資料：
-
-```powershell
-py core\train_sac_microgrid.py --config configs\experiments\p302\config_p302_v22_flow_power_limited.yaml --name <唯一實驗名稱>
-
-py data\scripts\figures\generate_selected_day_validation.py `
-  --experiment <實驗名稱> --model best_sac_model.pth `
-  --dates "<存在的日期>" --output-subdir selected_day_validation_best
-
-py data\scripts\figures\plot_hybrid_model_window.py `
-  --experiment <實驗名稱> --model best_sac_model.pth `
-  --dataset data\processed\<資料檔>.csv `
-  --start-date "<起始日 00:00:00>" --days 3 `
-  --output-subdir crossday_3_best --style single_day_thesis
-
-py data\scripts\figures\plot_hybrid_model_window.py `
-  --experiment <實驗名稱> --model best_sac_model.pth `
-  --dataset data\processed\<資料檔>.csv `
-  --start-date "<起始日 00:00:00>" --days 5 `
-  --output-subdir crossday_5_best --style single_day_thesis
+```text
+experiments/<實驗名稱>/
 ```
 
-`best_sac_model.pth` 與 `final_sac_model.pth` 都要在相同資料、日期、seed 與 safety 設定下比較；不可只憑名稱選用。歷史 v16sp 曾經人工驗證後選 final，目前 v22 部署則選 best。
+這個資料夾代表**一次訓練實驗**，裡面通常包含：
 
-## 輸入與輸出
+```text
+configs/   該次訓練實際使用的設定
+logs/      訓練過程紀錄
+models/    best、final 與其他 checkpoint
+results/   訓練圖、摘要與後續驗證結果
+```
 
-- 輸入：`configs/` 下可攜 YAML、其指定 dataset、seed、驗證日期／窗口，以及明確的 checkpoint。
-- 輸出：`experiments/<name>/configs/`、`logs/`、`models/`、`results/`；皆為本機衍生產物，Git clone 不保證存在。
-- 清冊：每輪記錄設定、checkpoint 類型、單日／3 日／5 日結果、淘汰原因與檔案是否實際存在；見[實驗清冊](../docs/handover/experiment_inventory.md)。
+訓練方式見[模型訓練](../core/README.md)。一般使用者只需要知道：**訓練一次就是一個實驗，不是四個實驗。**
 
-## 下一步
+## 後面的單日、3 日、5 日是什麼？
 
-先固定 PV support／blocking 邏輯與 `solo_only` 放電語意，再做短訓練與單日 smoke；通過後比較 best/final，接著跑連續 3 日、5 日，最後才更新清冊、論文圖或 release manifest。`v16s_aggr1000`、`v16s_crossday3_warm200_v7` 與所有 `partialassist`／`partial_assist`／`pa_antidrift` 已淘汰，只可追溯，不可回復為候選。
+它們是對同一個實驗內的模型做驗證，不會重新訓練模型：
 
-## 三個禁止事項
+- 單日：快速檢查模型行為。
+- 連續 3 日：檢查跨日 SoC 與控制是否開始退化。
+- 連續 5 日：確認較長時間的連續穩定性。
 
-1. 禁止提交任何 checkpoint、results、CSV、圖片、log 或整個實驗資料夾；只有本 README 與 `README_AI.md` 可被追蹤。
-2. 禁止只看單日或只看 `best`／`final` 檔名下結論；必須以相同條件完成單日、連續 3 日與連續 5 日驗證。
-3. 禁止把 PV/grid 寫成二選一，或讓 battery 成為第三個 partial-assist 來源；battery 放電必須符合可獨立承擔負載的 `solo_only` 語意。
+只有當模型準備成為候選、論文證據或部署候選時，才需要做完整驗證。驗證結果仍放回同一個 `experiments/<實驗名稱>/results/`。
+
+## 注意
+
+- `best_sac_model.pth` 與 `final_sac_model.pth` 都只是該次訓練產生的模型，不能只看檔名決定哪個較好。
+- 單日結果正常不代表跨日穩定。
+- `experiments/` 內的 checkpoint、log、CSV 與圖片只保存在本機，不提交到公開 repository。
+
+驗證指令、判讀標準與淘汰紀錄交由維護者或 AI 處理；技術細節見 [`README_AI.md`](README_AI.md) 與[實驗交接](../docs/handover/experiments.md)。
