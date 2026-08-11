@@ -2,7 +2,12 @@
 
 這個工具會把實驗電腦帶回來的 deployment／raw CSV 畫成容易查看的 PNG 圖片。
 
-一般使用者只需要照下面步驟操作。`mc_replay`、欄位轉換與其他技術設定不需要自行處理。
+這裡有兩種畫法：
+
+- **純看圖**：直接把實際量測與部署紀錄畫出來，日常查看先用這個。
+- **MC replay**：用同一批資料做簡化的不確定性重播，查看參考軌跡與可能範圍；它不是另一批真實量測。
+
+欄位轉換、計算假設與其他技術設定不需要一般使用者自行處理。
 
 ## 第一步：準備資料
 
@@ -36,9 +41,11 @@ py -m pip install -r tools\plotting_handoff\requirements.txt
 
 等畫面停止跑動並再次出現輸入提示後，再進行下一步。
 
-## 第四步：產生圖片
+## 第四步：選擇要畫哪一種圖
 
-貼上下面整行命令：
+### A. 純看圖（一般查看建議使用）
+
+這會直接讀取 `data/raw/` 裡所有日期成對的實際資料：
 
 ```powershell
 py tools\plotting_handoff\data_verification\dataset_to_figures.py --data-dir data\raw --output-dir tools\plotting_handoff\my_output
@@ -56,6 +63,57 @@ tools/plotting_handoff/my_output/
 - `*_voltage_current.png`：查看負載、PV、SoC、流量及電池電壓／電流。
 
 直接用圖片檢視器開啟 PNG 即可。
+
+### B. 畫 MC replay
+
+這會用相同資料產生簡化的不確定性重播圖：
+
+```powershell
+py tools\plotting_handoff\mc_replay\dataset_to_figures.py --data-dir data\raw --output-dir tools\plotting_handoff\my_mc_output
+```
+
+圖片會存到：
+
+```text
+tools/plotting_handoff/my_mc_output/
+```
+
+通常會產生：
+
+- `*_mc_command.png`：顯示參考 SoC、MC 中間結果、可能範圍與電池命令。
+- `*_voltage_current.png`：顯示相同 replay 時段的電壓與電流。
+
+MC replay 是輔助比較，不是完整電池模型，也不能取代實際量測或跨日驗證。
+
+## 只畫指定時間
+
+在命令中加入開始日期／時間與結束日期／時間即可。以下範例會畫：
+
+```text
+2026-07-17 08:00 到 2026-07-19 17:00
+```
+
+純看圖：
+
+```powershell
+py tools\plotting_handoff\data_verification\dataset_to_figures.py `
+  --data-dir data\raw `
+  --start-date 2026-07-17 --start-time 08:00 `
+  --end-date 2026-07-19 --end-time 17:00 `
+  --output-dir tools\plotting_handoff\my_output
+```
+
+MC replay：
+
+```powershell
+py tools\plotting_handoff\mc_replay\dataset_to_figures.py `
+  --data-dir data\raw `
+  --start-date 2026-07-17 --start-time 08:00 `
+  --end-date 2026-07-19 --end-time 17:00 `
+  --output-dir tools\plotting_handoff\my_mc_output
+```
+
+請把範例日期與時間換成自己的資料範圍。這代表一段**連續時間**，不是每天只畫 08:00–17:00。
 
 ## 想先測試工具是否正常
 
@@ -84,4 +142,4 @@ py tools\plotting_handoff\data_verification\dataset_to_figures.py --data-dir too
 - 電池放電不是與 PV／市電一起分攤負載。
 - 一天的圖看起來正常，不代表模型能連續多日穩定運作。
 
-需要指定日期／時間、使用 MC replay、修改圖片格式或解讀欄位時，請交由維護者或 AI 處理；技術細節見 [`README_AI.md`](README_AI.md)。
+需要修改圖片格式、調整 MC 設定或解讀欄位時，請交由維護者或 AI 處理；技術細節見 [`README_AI.md`](README_AI.md)。
