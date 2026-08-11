@@ -32,6 +32,12 @@
 - **主要命令／產物**：從 `raw_data_v2_*.csv` 與 `deployment_v2_*.csv` 產生四面板 PNG；原始 CSV、圖與 PDF 不提交。
 - **下一步**：記錄 runtime、vendor 版本、CSV schema、時間窗與繪圖命令，再判讀結果。
 
+## 遇過的問題與解法
+
+- 想確認以前是否發生過相同問題，先搜尋 [`PROJECT_ISSUES_AND_SOLUTIONS.md`](../PROJECT_ISSUES_AND_SOLUTIONS.md)。
+- 已確認的新問題、根因、修正與驗證結果也記錄在同一份文件，避免下一位接手者重複排查。
+- 目前 release 狀態仍以 [release manifest](handover/release_manifest.md) 為準；目前模型候選與淘汰狀態以[實驗清冊](handover/experiment_inventory.md)為準，不能被歷史問題紀錄覆蓋。
+
 ## 如果要修改程式
 
 一般操作只要依上面五條流程進入對應的 `README.md`。AI／維護者請改從 [`AGENTS.md`](../AGENTS.md) 開始，再依任務閱讀各目錄的 `README_AI.md`；技術限制、歷史問題與版本差異不放在人員導航首頁。

@@ -9,6 +9,7 @@
 - **新接手者**：先讀 [`docs/HANDOVER_zh.md`](docs/HANDOVER_zh.md)
 - **AI／維護者**：先讀 [`AGENTS.md`](AGENTS.md)
 - **目前部署與 artifact 狀態**：查閱 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md)
+- **以前遇過的問題與解法**：查閱 [`PROJECT_ISSUES_AND_SOLUTIONS.md`](PROJECT_ISSUES_AND_SOLUTIONS.md)
 
 ## 依工作選入口
 
