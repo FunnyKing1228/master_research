@@ -1,50 +1,87 @@
-# 四面板繪圖操作指南
+# 實際部署資料畫圖
 
-本工具把每日 `deployment_v2_*.csv` 與 `raw_data_v2_*.csv` 轉成四面板 PNG。技術細節見 [README_AI.md](README_AI.md)，全專案資料交接見 [data_and_plotting.md](../../docs/handover/data_and_plotting.md)。以下命令都從 `conformal-microgrid-rl` repository root 執行。
+這個工具會把實驗電腦帶回來的 deployment／raw CSV 畫成容易查看的 PNG 圖片。
 
-## 兩條 pipeline
+一般使用者只需要照下面步驟操作。`mc_replay`、欄位轉換與其他技術設定不需要自行處理。
 
-- `data_verification`：直接畫量測／部署資料，不執行 Monte Carlo（MC）。
-- `mc_replay`：以簡化 MC replay 顯示參考 SoC、MC 中位數與 5–95% 區間。
+## 第一步：準備資料
 
-## 安裝
+先把同一天的兩個 CSV 成對放入 repository 的 `data/raw/`：
 
-需要 Python 3.10 以上版本。
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r tools/plotting_handoff/requirements.txt
+```text
+data/raw/
+  deployment_v2_2026-07-17.csv
+  raw_data_v2_2026-07-17.csv
+  deployment_v2_2026-07-18.csv
+  raw_data_v2_2026-07-18.csv
 ```
 
-macOS／Linux 將前兩行改為 `python3 -m venv .venv`、`source .venv/bin/activate`。
+兩個檔名的日期必須相同。缺少其中一個，該日資料就不完整。
 
-## 最常用命令
+## 第二步：打開正確的終端機
 
-資料驗證（`--view`：`both`、`power`、`voltage-current`）：
+1. 使用 Cursor 開啟 `conformal-microgrid-rl` 資料夾。
+2. 在上方選單選擇 **Terminal → New Terminal**。
+3. 確認終端機目前位置的最後一段是 `conformal-microgrid-rl`。
+
+下面所有命令都貼在這個終端機執行。
+
+## 第三步：第一次使用時安裝畫圖套件
+
+這個命令只需要在第一次使用，或換新電腦時執行：
 
 ```powershell
-python tools/plotting_handoff/data_verification/dataset_to_figures.py --data-dir tools/plotting_handoff/dataset --start-date 2026-07-17 --end-date 2026-07-19 --start-time 08:00 --end-time 17:00 --output-dir tools/plotting_handoff/data_verification/example_output
+py -m pip install -r tools\plotting_handoff\requirements.txt
 ```
 
-MC replay（`--view`：`both`、`command`、`voltage-current`）：
+等畫面停止跑動並再次出現輸入提示後，再進行下一步。
+
+## 第四步：產生圖片
+
+貼上下面整行命令：
 
 ```powershell
-python tools/plotting_handoff/mc_replay/dataset_to_figures.py --data-dir tools/plotting_handoff/dataset --start-date 2026-07-17 --end-date 2026-07-19 --start-time 08:00 --end-time 17:00 --output-dir tools/plotting_handoff/mc_replay/example_output
+py tools\plotting_handoff\data_verification\dataset_to_figures.py --data-dir data\raw --output-dir tools\plotting_handoff\my_output
 ```
 
-## 輸入與輸出
+這個命令會讀取 `data/raw/` 裡所有日期成對的資料，並把圖片存到：
 
-- 輸入目錄須含同日配對的 `deployment_v2_YYYY-MM-DD.csv` 與 `raw_data_v2_YYYY-MM-DD.csv`；內附範例在 `tools/plotting_handoff/dataset/`。MC 也可用 `--input-csv` 讀取已轉換的單一 CSV。
-- 日期與時間合成一段連續區間，例如 `2026-07-17 08:00` 至 `2026-07-19 17:00`，不是每天只取 08:00–17:00。
-- 預設各產生兩張 300 dpi PNG，位置分別為 `data_verification/example_output/` 與 `mc_replay/example_output/`；可用 `--output-dir`、`--name` 改位置與檔名前綴。
+```text
+tools/plotting_handoff/my_output/
+```
 
-## 下一步
+正常完成時，終端機會顯示 `Saved:`，通常會產生兩張圖：
 
-先用內附資料執行對應 pipeline；確認圖面與時間範圍後，再把 `--data-dir` 和 `--output-dir` 換成自己的路徑。若要解讀欄位、MC 假設或物理限制，先讀 [README_AI.md](README_AI.md)。
+- `*_power.png`：查看負載、PV、電池功率、流量與 SoC。
+- `*_voltage_current.png`：查看負載、PV、SoC、流量及電池電壓／電流。
 
-## 三個禁止事項
+直接用圖片檢視器開啟 PNG 即可。
 
-1. 禁止把 PV 與 grid 解讀成嚴格二選一，或由 `grid == 0` 宣稱全太陽能供電。
-2. 禁止把電池放電解讀成與 PV／grid 並聯的部分助力來源。
-3. 禁止把簡化 MC 區間當成完整物理可信區間，或以單日好圖宣稱跨日穩定／論文就緒。
+## 想先測試工具是否正常
+
+Repository 內附三天範例資料。執行：
+
+```powershell
+py tools\plotting_handoff\data_verification\dataset_to_figures.py --data-dir tools\plotting_handoff\dataset --output-dir tools\plotting_handoff\test_output
+```
+
+若看到 `Saved:`，並在 `tools/plotting_handoff/test_output/` 找到兩張 PNG，表示基本畫圖功能正常。
+
+## 如果失敗
+
+先檢查：
+
+1. deployment 與 raw CSV 是否成對，而且日期相同。
+2. 檔案是否真的放在 `data/raw/`。
+3. 終端機位置是否為 `conformal-microgrid-rl`。
+4. 第三步的安裝命令是否成功。
+
+仍無法完成時，不要自行修改 CSV 或程式。把終端機最後一段錯誤訊息完整複製給維護者或 AI。
+
+## 看圖時要注意
+
+- PV 與市電可能同時支援負載，不能把圖解讀成兩者只能選一個。
+- 電池放電不是與 PV／市電一起分攤負載。
+- 一天的圖看起來正常，不代表模型能連續多日穩定運作。
+
+需要指定日期／時間、使用 MC replay、修改圖片格式或解讀欄位時，請交由維護者或 AI 處理；技術細節見 [`README_AI.md`](README_AI.md)。
