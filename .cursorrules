@@ -1,0 +1,32 @@
+# conformal-microgrid-rl critical project rules
+
+## Current project state
+- The old `v16s_aggr1000` line is **not acceptable as final thesis evidence**: single-day behavior looked reasonable, but 3-day and 5-day continuous simulations exposed clear cross-day failure / degradation.
+- A follow-up cross-day retraining experiment (`v16s_crossday3_warm200_v7`) improved multi-day stability somewhat, but is still **not final-quality**.
+
+## Hard-won lessons: do not repeat these mistakes
+- Do **not** treat the system as a strict "solar OR grid" source selector. In the real platform, **solar and grid can supply the load simultaneously**.
+- Do **not** let the battery behave like a third parallel assist source. Real hardware allows `PV <-> grid` mutual support, but **battery discharge cannot partially assist alongside PV/grid**; if battery discharge is valid, it must effectively be able to serve the load on its own.
+- Do **not** infer "full solar supply" from `grid == 0`, bus-vs-grid voltage comparison, or any simplistic instantaneous source comparison.
+- Do **not** use a jittery instantaneous PV boolean as the main physics truth for both observation and blocking logic. This caused unstable labels and polluted training.
+- Do **not** overclaim source attribution in thesis text or figure captions unless it is directly measurable. Prefer wording like "PV support increases" and "grid demand decreases" instead of "the load is fully supplied by solar."
+
+## Preferred modeling direction
+- Separate three concepts:
+  1. `PV availability` (physical phenomenon),
+  2. `PV support level` (continuous support to load),
+  3. `PV blocking state` (control logic state for whether battery discharge should be blocked).
+- Keep **continuous PV support** in the observation, e.g. `pv_support_ratio`.
+- If a discharge-blocking boolean is needed, it should be **stateful and hysteretic**, not a raw instantaneous threshold.
+- When redesigning the experiment, **fix PV-state / blocking logic first**, then re-run short training. Do not simultaneously change too many things (reward, horizon, PV logic, plotting assumptions) unless necessary.
+
+## Thesis / plotting rules
+- Do not reuse old thesis figures that imply binary solar-vs-grid switching.
+- Thesis figures must be based on the newer interpretation: `PV support ratio`, `PV sufficient/hysteresis state`, `battery power`, `SoC`, `load`, and `grid draw`.
+- A figure is only thesis-ready if the caption alone clearly communicates the intended claim and does not exaggerate source separation.
+- Before generating final thesis figures, verify that the model is acceptable in **multi-day** simulation, not only on a single day.
+
+## Recommended next steps
+- Redefine PV state using: continuous support + hysteresis boolean / smoothed blocking state.
+- Keep reward mostly fixed initially; isolate the effect of PV-state redesign.
+- Run short validation first (single day + 3 day), then only scale up if cross-day behavior is actually improved.
