@@ -1,231 +1,63 @@
-# Deployment-Safe RL for Microgrid Energy Management
+# Microgrid RL 研究與部署程式
 
-**Taking a reinforcement-learning controller from simulation onto a live physical
-battery microgrid — with a safety layer that keeps the hardware from ever
-executing an unsafe action.**
+這是微電網強化學習研究的 **source-only 交接 repository**，集中保存程式碼、設定、測試與可重現流程。
 
-Most RL energy-management demos stop at a clean simulator. This project is about
-the hard part that comes after: making a learned policy survive contact with real
-hardware — drifting state estimates, frozen or delayed sensors, firmware quirks,
-asymmetric battery limits, and action semantics that differ from the idealized
-training environment — while never violating physical safety limits.
+本 repository 不等於完整實驗環境，也不代表任何模型或 GUI release 已完成最終驗收。
 
-The controller pairs a SAC policy with **CORAL**, a deployment-safety layer
-(conformal risk corridor + action projection + opportunity-cost shaping) that
-projects unsafe actions back into a feasible region before they reach the
-battery. The repository contains the full stack I built around it: the training
-and simulation environment, the real-time deployment runtime that talks to
-vendor hardware, an operator GUI, packaging, and a reproducible evaluation
-pipeline.
+## 從哪裡開始？
 
-> **Publication:** H. Y. Wen and H. Y. Chen, “Deployment-Safe Reinforcement
-> Learning Agent for Microgrid Energy Management via Conformal Prediction and
-> Opportunity-Cost Awareness,” oral presentation, The 249th ECS Meeting,
-> Seattle, USA, 2026.
+- **新接手者**：先讀 [`docs/HANDOVER_zh.md`](docs/HANDOVER_zh.md)
+- **AI／維護者**：先讀 [`AGENTS.md`](AGENTS.md)
+- **目前部署與 artifact 狀態**：查閱 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md)
 
----
+## 依工作選入口
 
-## What this project demonstrates (for engineers)
+1. [資料準備](data/README.md)
+2. [模型訓練](core/README.md)
+3. [實驗與跨日驗證](experiments/README.md)
+4. [部署與 GUI 打包](packaging/README.md)
+5. [現場 CSV 與繪圖](tools/plotting_handoff/README.md)
 
-- **Sim-to-real control** — a policy trained in simulation, then deployed on a
-  physical microgrid through a real-time control loop, with the gap explicitly
-  engineered away rather than assumed away.
-- **Safety-critical decision-making** — a guard layer that provably bounds the
-  system (State-of-Charge stays inside physical limits) regardless of what the
-  learned policy proposes.
-- **Robustness to real-world faults** — guards for voltage cutoff, isolated
-  load-bus behaviour, firmware/current inconsistencies, and frozen sensor data.
-- **Reproducible evaluation** — deterministic seeds, fixed decision cadence,
-  paired A/B experiments, and full ablations across methods and scenarios.
-- **Shipping, not just notebooks** — file-based hardware I/O protocol, a Tkinter
-  operator GUI, and a one-command PyInstaller Windows build.
-- **Engineering judgment** — I found and fixed a physics bug in the simulator,
-  then designed a controlled experiment to *prove* the fix was correct and
-  side-effect-free (see [Engineering rigor](#engineering-rigor-a-bug-hunt-worth-reading)).
+每個區域另有 `README_AI.md`，記錄 source map、限制、驗證方式與已知技術債。
 
-## Highlights
-
-- The **CORAL / SafetyNet guard layer eliminated strict State-of-Charge band
-  violations** for the learned controllers in the flow-control scenarios, while
-  keeping operating economics comparable to the unguarded policies.
-- After a physical-floor correction, **State-of-Charge is guaranteed ≥ 0 for
-  every method**, and per-step limit excursions are bounded by the battery’s
-  physical headroom — verified directly from step-level logs.
-- Unguarded baselines (raw SAC, PPO) that looked fine in aggregate were shown to
-  drive the battery into physically impossible states without the safety layer —
-  a concrete demonstration of *why* the guard matters.
-
----
-
-## System architecture
-
-```mermaid
-flowchart LR
-    subgraph Hardware["Physical Microgrid (vendor-supplied)"]
-        PV["PV / MPPT"]
-        Load["DC Load Bank"]
-        Battery["SLFB Battery"]
-        Vendor["Vendor Controller"]
-    end
-
-    subgraph Runtime["Deployment Runtime (mine)"]
-        Data["Data.txt readings"]
-        IO["control/io_protocol.py"]
-        State["15-min aggregation + SoC tracker"]
-        Policy["SAC policy"]
-        Safety["CORAL / SafetyNet guards"]
-        SoH["Online SoH predictor"]
-        Command["Command.txt actions"]
-    end
-
-    subgraph Tooling["Operator & Analysis Tools (mine)"]
-        GUI["Tkinter deployment GUI"]
-        Package["PyInstaller release"]
-        Diagnostics["Diagnostics & figure scripts"]
-        Tests["Unit & regression tests"]
-    end
-
-    PV --> Vendor
-    Load --> Vendor
-    Battery --> Vendor
-    Vendor --> Data
-    Data --> IO --> State --> Policy --> Safety --> Command --> Vendor
-    State --> SoH --> State
-    GUI --> Data
-    GUI --> Command
-    Package --> GUI
-    Data --> Diagnostics
-    Command --> Diagnostics
-    Tests --> IO
-    Tests --> State
-```
-
-The runtime executes on 15-minute decision windows and communicates with the
-vendor controller through a simple `Data.txt` / `Command.txt` file protocol, so
-the learned controller can be dropped in front of hardware that was never
-designed for RL.
-
----
-
-## Engineering deep-dives
-
-### The CORAL deployment-safety layer
-
-CORAL keeps an RL controller deployable under uncertain battery state. It uses
-recent prediction residuals to build a **conformal risk corridor** around the
-SoC trajectory, **projects unsafe actions** back into a feasible region before
-they reach the hardware, and turns each safety correction into an **opportunity
-cost** so the policy learns to avoid risky states in the first place. This means
-the safety guarantee holds at deployment even for a policy that was never
-perfectly safe on its own.
-
-### Hardware-aligned simulation environment
-
-A Gymnasium environment that deliberately models the messy parts of real
-deployment: asymmetric charge/discharge limits, battery-only discharge
-semantics, PV-first load supply, time-of-use pricing, voltage-cutoff behaviour,
-and an optional 2-D `[power, flow_rate]` action space for flow-battery pump
-control. Training against these constraints is what makes the sim-to-real
-transfer actually work.
-
-### Robust real-time deployment
-
-The deployment loop is built to fail safe, not to assume clean inputs. It guards
-against voltage cutoff, isolated load-bus conditions, firmware-vs-calculated SoC
-disagreement, and frozen/stale sensor readings, and it reconciles Coulomb-counting
-SoC with voltage-based correction. An online State-of-Health predictor adjusts
-effective capacity over time.
-
-### Engineering rigor: a bug hunt worth reading
-
-While validating results I noticed the flow-control scenarios reported battery
-“violation energy” larger than the entire battery capacity — a physical
-impossibility. Tracing it through the environment, the simulator was **not
-clipping SoC at its physical floor**, so an aggressive policy could discharge the
-battery into a negative, non-physical state while the observation was silently
-clamped to `[0, 1]`.
-
-Rather than just patch the number, I:
-
-1. Added a hard physical SoC floor that **truncates discharge to the energy
-   actually available** and routes the unmet load to the grid with correct cost
-   accounting.
-2. Re-ran a **paired A/B experiment** (floor-off vs floor-on) under an identical
-   harness — same seeds, checkpoints, decision cadence, and evaluation horizon —
-   so the only variable was the fix.
-3. Added an **invariance check** proving that well-behaved methods were
-   *bit-for-bit identical* before and after the change, and verified SoC ≥ 0 for
-   every method directly from step-level logs.
-
-This is the kind of debugging, controlled experimentation, and regression-proofing
-I bring to production systems.
-
----
-
-## Tech stack
-
-Python · PyTorch (SAC) · Stable-Baselines3 (PPO) · Gymnasium · NumPy / pandas ·
-Matplotlib · Tkinter (operator GUI) · PyInstaller (Windows packaging) · pytest.
-
-## Repository layout
+## Repository 內容
 
 ```text
-configs/       Quick-start, experiment, deployment, and baseline configs
-control/       Real-time deployment loop and hardware I/O protocol
-core/          RL agents, microgrid environment, safety layers, SoH predictor
-data/scripts/  Preprocessing, diagnostics, figures, and baseline utilities
-docs/          Research notes and experiment protocols
-examples/      Standalone example microgrid environments
-gui/           Tkinter deployment GUI
-packaging/     PyInstaller build specification
-tests/         Unit and regression tests
-tools/         Portable handoff and analysis tools
+configs/                 訓練、驗證與部署設定
+control/                 即時控制流程與 Data.txt／Command.txt protocol
+core/                    SAC、環境、安全層與 SoH inference source
+data/scripts/            資料處理、baseline 與繪圖腳本
+docs/                    交接與版本狀態文件
+experiments/README*.md   實驗流程說明（不含實驗產物）
+gui/                     Windows 操作介面
+packaging/               PyInstaller 打包流程
+tests/                   單元與 regression tests
+tools/plotting_handoff/  可攜式四面板繪圖工具與小型範例資料
 ```
 
-## Quick start
+## 不包含的內容
 
-新接手者請先讀繁中「我要做什麼」入口：
-[`docs/HANDOVER_zh.md`](docs/HANDOVER_zh.md)。
-AI／自動化維護者請先讀 [`AGENTS.md`](AGENTS.md)。
+公開 repository 刻意不保存：
 
-```bash
-pip install -r requirements.txt      # install dependencies
-pytest                               # run the test suite
+- `data/raw/`、`data/processed/` 的實際研究資料；
+- `experiments/` 訓練產物與 RL／SoH 模型權重；
+- `outputs/`、`thesis_sim/` 與大型圖表產物；
+- GUI release、ZIP、EXE 與 vendor P302 軟體；
+- `config_gui.json`、本機 log、虛擬環境與個人路徑。
 
-# Train a controller
-python core/train_sac_microgrid.py --config configs/config_p302_sim.yaml
+因此，clone 後必須另外取得符合設定檔 schema 的 processed dataset、指定 checkpoint、SoH model，以及實驗電腦上的 vendor 軟體，才能進行完整訓練或部署。
 
-# Run deployment (development mode)
-python control/run_deployment.py ^
-  --data-file path/to/Data.txt ^
-  --command-file path/to/Command.txt ^
-  --model-path path/to/best_sac_model.pth ^
-  --battery-pp 01
+## 目前重要狀態
 
-# Build the Windows GUI package
-powershell -ExecutionPolicy Bypass -File .\_deploy.ps1
+- Stable pre-measure／probe 已回寫 source 並通過單元測試。
+- 尚未由目前 source 正式重建 GUI release，也尚未完成實驗電腦硬體驗收。
+- 模型是否可部署或可作為論文證據，必須以實驗清冊、跨日驗證與 release manifest 為準，不能只看單日結果或 checkpoint 名稱。
+
+## 基本驗證
+
+```powershell
+py -m pytest tests\test_deployment.py tests\test_io_protocol.py tests\test_microgrid_env.py
+py -m compileall control core gui data\scripts tests
 ```
 
-Historical P302 experiment configs live under `configs/experiments/p302/`;
-baseline and ablation configs under `configs/baselines/`. For hardware setup,
-GUI packaging, and operational checks, see
-[`docs/deployment_guide.md`](docs/deployment_guide.md).
-
-## My role
-
-I designed and built the **entire software stack solo** — the RL training
-pipeline, the CORAL safety layer, the real-time deployment runtime, the operator
-GUI, the Windows packaging, and the reproducible evaluation pipeline —
-integrating against **vendor-supplied microgrid hardware**.
-
-## Data and model artifacts
-
-Large raw logs, trained checkpoints, packaged executables, and third-party
-reference material are intentionally excluded from version control to keep the
-repository focused on source, configuration, and reproducible scripts. Scripts
-expect logs and weights at the local paths described in their configuration.
-
-This public snapshot does not include `data/processed/`, experiment outputs,
-RL/SoH model weights, vendor P302 software, or packaged GUI releases. Prepare or
-obtain those artifacts separately before training, SoH inference, or hardware
-deployment.
+本專案採用 [MIT License](LICENSE)。
