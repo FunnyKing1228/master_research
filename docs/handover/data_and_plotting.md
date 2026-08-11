@@ -84,6 +84,9 @@ results/deployment/deployment_v2_YYYY-MM-DD.csv
 results/deployment/raw_data_v2_YYYY-MM-DD.csv
 ```
 
+- 從實驗電腦帶回 repository 工作區時，應將同一天的 `deployment_v2_YYYY-MM-DD.csv` 與 `raw_data_v2_YYYY-MM-DD.csv` **成對複製到 `data/raw/`**，保留原始檔名與內容。
+- 兩個檔名的日期必須相同；任一缺檔都應標記為該日資料不完整。
+- 多數既有診斷與歷史繪圖腳本直接讀 `data/raw/`，不會自動遞迴搜尋任意子目錄。
 - `raw_data_v2_*`：約每次輪詢的原始／解析後量測，適合檢查 freeze、時間戳、電壓、電流、MPPT、load/grid 與 vendor load count。
 - `deployment_v2_*`：每個模型決策窗的 aggregation、SoC、raw/safe/final action、guard、命令與狀態，適合 closed-loop 行為、阻擋原因與 replay 分析。
 - 目前兩類 CSV 都會記錄／推導 `vendor_load_count`、`load_power_per_unit_w`、`load_power_est_w`；估算值是組數乘每組功率，不可誤當 load power 的獨立直接量測。

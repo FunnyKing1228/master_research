@@ -14,10 +14,19 @@
 - `core/microgrid_env.py`：`dataset_csv_path` 的最終消費者，載入時間、PV、load、price 並形成 observation／episode。
 - `core/train_sac_microgrid.py::load_config()`：解析相對 `env.dataset_csv_path`；依目前工作目錄、YAML 目錄、YAML 上一層嘗試存在的候選。
 
+## 現場 CSV 放置契約
+
+同一實驗日的 `deployment_v2_YYYY-MM-DD.csv` 與 `raw_data_v2_YYYY-MM-DD.csv` 必須保留原檔名，成對放在 `data/raw/`。多日資料就是多組同日期配對；缺少任一檔案時應標記該日資料不完整，不可靜默假設另一份可替代。
+
+多數歷史 diagnostics、figures 與部分 preprocessing scripts 直接以 `data/raw/` 為 `RAW_DIR`，不會遞迴搜尋任意子目錄。除非使用者明確傳入支援的 `--data-dir`／input path，否則不要自行改成其他層級。
+
 ## 資料／config 流
 
 ```text
-外部不可變現場檔或 data/raw 本機副本
+實驗電腦 results/deployment/
+  deployment_v2_YYYY-MM-DD.csv
+  raw_data_v2_YYYY-MM-DD.csv
+  -> 成對複製至 data/raw/，保留檔名與內容
   -> 選定且人工查核過的 preprocessing script
   -> data/processed/<dataset>.csv
   -> configs/experiments/p302/<source-config>.yaml

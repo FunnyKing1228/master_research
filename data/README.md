@@ -6,6 +6,24 @@
 
 `data/` 保存資料處理程式與本機資料工作區：`scripts/preprocessing/` 放不同來源、不同目的的前處理腳本，`processed/` 放訓練可讀的衍生 CSV。實際訓練資料永遠以所用 YAML 的 `env.dataset_csv_path` 為準。
 
+## 現場 deployment 資料怎麼放
+
+從實驗電腦取得資料後，將**同一天的兩個 CSV 成對放入 `data/raw/`**：
+
+```text
+data/raw/
+  deployment_v2_2026-07-17.csv
+  raw_data_v2_2026-07-17.csv
+  deployment_v2_2026-07-18.csv
+  raw_data_v2_2026-07-18.csv
+```
+
+- `deployment_v2_YYYY-MM-DD.csv` 與 `raw_data_v2_YYYY-MM-DD.csv` 的日期必須相同。
+- 每一天都應有一組；只有其中一個檔案代表資料不完整。
+- 保留原始檔名與內容，不要覆寫或先手動合併。
+- 多數現有診斷、繪圖與歷史 preprocessing script 預設直接讀 `data/raw/`，因此最安全的做法是把成對檔案放在這一層。
+- `data/raw/` 已被 Git 忽略；這些現場 CSV 只留在本機，不提交到 repository。
+
 ## 開始命令
 
 先從 repository 根目錄確認目前 v22 指向的資料存在：
@@ -27,7 +45,7 @@ py data\scripts\preprocessing\preprocess_raw_to_15min.py `
 ## 輸入
 
 - 外部／本機保存的現場原始 CSV（不可變、不可提交）。
-- `data/raw/` 的本機 deployment/raw log。
+- `data/raw/` 中依日期成對的 `deployment_v2_*.csv` 與 `raw_data_v2_*.csv`。
 - 個別腳本指定的既有 `data/processed/*.csv` 或日期集合。
 - 欄位、單位、時間戳與 vendor controller 版本紀錄。
 
