@@ -4,9 +4,10 @@
 
 P302 SAC 系列統一由 [`core/train_sac_microgrid.py`](../../core/train_sac_microgrid.py) 啟動。不要另建第二套訓練入口，也不要把 baseline、繪圖或部署腳本誤當成主訓練程式。環境、代理與實驗目錄分別由 [`core/microgrid_env.py`](../../core/microgrid_env.py)、[`core/sac_agent.py`](../../core/sac_agent.py) 與 [`core/experiment_manager.py`](../../core/experiment_manager.py) 提供。
 
-建議固定從 repo 根目錄執行，並明示 YAML。現行 v22 release 所用實驗的可攜來源設定是 [`config_p302_v22_flow_power_limited.yaml`](../../configs/experiments/p302/config_p302_v22_flow_power_limited.yaml)：
+建議固定從 repo 根目錄執行，並明示 YAML。**以下命令會真正訓練模型、更新權重，並建立一個新的 experiment**。現行 v22 release 所用實驗的可攜來源設定是 [`config_p302_v22_flow_power_limited.yaml`](../../configs/experiments/p302/config_p302_v22_flow_power_limited.yaml)：
 
 ```powershell
+# 訓練命令：執行一次會建立一個 experiments/<name>/
 py core\train_sac_microgrid.py `
   --config configs\experiments\p302\config_p302_v22_flow_power_limited.yaml `
   --name <新且唯一的-v22-實驗名稱>

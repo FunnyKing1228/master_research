@@ -24,9 +24,12 @@
 
 ## 單日驗證
 
+> 本節與下一節的命令都只讀取已訓練完成的 checkpoint 做 rollout，不會繼續訓練，也不會更新模型權重。單日、3 日、5 日結果都屬於原本同一個 `experiments/<實驗名稱>/`。
+
 多日期單日驗證可使用 [`generate_selected_day_validation.py`](../../data/scripts/figures/generate_selected_day_validation.py)：
 
 ```powershell
+# 驗證 1：讀取現有模型做單日行為檢查，不訓練
 py data\scripts\figures\generate_selected_day_validation.py `
   --experiment <實驗名稱> `
   --model best_sac_model.pth `
@@ -41,12 +44,14 @@ py data\scripts\figures\generate_selected_day_validation.py `
 通用窗口可使用 [`plot_hybrid_model_window.py`](../../data/scripts/figures/plot_hybrid_model_window.py)，分別執行：
 
 ```powershell
+# 驗證 2：讀取同一個現有模型做連續 3 日 rollout，不訓練
 py data\scripts\figures\plot_hybrid_model_window.py `
   --experiment <實驗名稱> --model best_sac_model.pth `
   --dataset data\processed\<實際資料檔>.csv `
   --start-date "YYYY-MM-DD 00:00:00" --days 3 `
   --output-subdir crossday_3_best --style single_day_thesis
 
+# 驗證 3：讀取同一個現有模型做連續 5 日 rollout，不訓練
 py data\scripts\figures\plot_hybrid_model_window.py `
   --experiment <實驗名稱> --model best_sac_model.pth `
   --dataset data\processed\<實際資料檔>.csv `

@@ -4,13 +4,13 @@
 
 ## Source map
 
-- 訓練入口：`core/train_sac_microgrid.py`
+- 唯一會更新模型權重的訓練入口：`core/train_sac_microgrid.py`
 - 可攜實驗設定：`configs/experiments/p302/`
 - baseline 設定：`configs/baselines/research/`
 - 環境與物理語意：`core/microgrid_env.py`
 - SafetyNet：`core/safety_net.py`
-- 單日驗證：`data/scripts/figures/generate_selected_day_validation.py`
-- 連續 3/5 日 rollout：`data/scripts/figures/plot_hybrid_model_window.py`
+- 單日驗證（只讀 checkpoint，不訓練）：`data/scripts/figures/generate_selected_day_validation.py`
+- 連續 3/5 日 rollout（只讀 checkpoint，不訓練）：`data/scripts/figures/plot_hybrid_model_window.py`
 - 實驗規範：[`docs/handover/experiments.md`](../docs/handover/experiments.md)
 - inventory／狀態權威：[`docs/handover/experiment_inventory.md`](../docs/handover/experiment_inventory.md)
 - 部署 checkpoint 與 hash：[`docs/handover/release_manifest.md`](../docs/handover/release_manifest.md)
