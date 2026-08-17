@@ -1,0 +1,126 @@
+# newHW off-grid LFP provisional simulation config
+# Derived structurally from configs/config_p302_sim.yaml without modifying it.
+# This is NOT a validated hardware or deployment configuration.
+
+random_seed: 42
+device: "auto"
+
+env:
+  hardware_family: "newHW"
+  offgrid: true
+  allow_grid_trading: false
+  allow_grid_export: false
+
+  dataset_csv_path: "data/newHW/processed/training_newHW_15min.csv"
+  dataset_time_column: "timestamp"
+  use_real_data: true
+  episode_length: 188
+  time_step: 0.25
+
+  # TODO(newHW): 0.20 kWh is the conservative observed usable energy
+  # (198.5 Wh before the reported BMS trip), not the 0.449 kWh nameplate.
+  battery_capacity_kwh: 0.20
+
+  # TODO(newHW): charge limit uses the observed 129 W PV peak, not confirmed
+  # MPPT/BMS ratings.  Discharge limit uses observed 35.7 W load state A,
+  # not the LFP cell or BMS continuous-current rating.
+  battery_power_kw: 0.129
+  battery_charge_power_kw: 0.129
+  battery_discharge_power_kw: 0.0357
+  battery_efficiency: 0.95
+
+  # TODO(newHW): operational SoC limits and initial SoC need BMS/cell data.
+  # These values are provisional smoke-test boundaries only.
+  soc_min: 0.10
+  soc_max: 0.90
+  initial_soc: 0.90
+  soc_init_mode: "fixed"
+  clip_soc_to_bounds: true
+  soc_physical_floor: 0.0
+
+  # LFP has no liquid-flow pump.  No flow_* keys are intentionally present.
+  use_flow_rate_action: false
+  ramp_limit_kw: null
+  hard_guard: true
+
+  # Kept only for compatibility with shared SAC helpers; this is a 1D direct
+  # battery power action, not P302 load-determined discharge behavior.
+  discharge_auto: false
+  discharge_mode: "solo_only"
+  action_dead_zone_kw: 0.0
+
+  # No TOU price or grid observation exists in the newHW environment.
+  price_obs: false
+  pv_obs_boolean: false
+  pv_support_ratio_obs: true
+
+sac:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  alpha: 0.05
+  target_entropy: -1.0
+  alpha_lr: 0.0001
+  hidden_dim: 128
+  buffer_size: 20000
+  batch_size: 128
+  warmup_steps: 500
+  update_every: 4
+  beta_occ: 0.0
+  actor_update_interval: 1
+  alpha_update_interval: 1
+  actor_warmup_updates: 0
+  freeze_alpha: false
+
+training:
+  # Short, repeated in-sample smoke only.  Two days cannot establish
+  # generalization and cannot support 3-day/5-day validation.
+  total_episodes: 50
+  max_steps: 188
+  eval_every: 10
+  eval_episodes: 1
+  save_every: 25
+  variant: "sac_sn"
+  safetynet_warmup_episodes: 10
+  lambda_evi: 0.0
+  beta_risk: 0.0
+
+safetynet:
+  ramp_limit_kw: null
+  soc_margin: 0.0
+
+conformal:
+  window: 376
+  delta: 0.1
+
+# TODO(newHW): provisional objective; humans must decide final priorities and
+# weights.  No grid, TOU, revenue, cost, or arbitrage term is used.
+reward_newHW:
+  objective_status: "PROVISIONAL_REQUIRES_HUMAN_DECISION"
+  served_load: 1.0
+  unmet_load: 12.0
+  low_soc_reserve: 2.0
+  reserve_soc: 0.20
+  battery_throughput: 0.05
+  pv_curtailment: 0.05
+
+# Shared trainer safety-shaping terms.  They do not define the off-grid
+# objective and remain separate from reward_newHW.
+reward:
+  realized_violation_penalty: 10.0
+  attempted_violation_penalty: 0.01
+  safety_projection_penalty: 0.0005
+
+guided_teacher:
+  enabled: false
+
+stress:
+  enable: false
+
+logging:
+  log_interval: 5
+  save_models: true
+  save_metrics: true
+  plot_results: true
+  csv_per_episode: true
