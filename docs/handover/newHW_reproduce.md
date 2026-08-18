@@ -372,6 +372,90 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 
 從目前 source 以真實 checkpoint 重建 GUI release，並在實驗電腦完成硬體驗收——此事尚未有人執行。不得將「spec 機制已驗證」描述為「release 已可交付」。正式狀態仍以 [`release_manifest.md`](release_manifest.md) 為準。
 
+### 11.1 站④打包的三種做法與建議
+
+> 本節回答「能不能沿用舊版 GUI 打包」。該問題有三種讀法，結果完全不同，先分清楚再決定。
+
+#### 做法一：開啟既有 release 展示（可行，日常展示建議用這個）
+
+不需要打包。若既有 P302 release 仍保存在實驗電腦，其位置為
+`%USERPROFILE%\Downloads\Microgrid_AI\release_v22_flow_power_limited\`，可直接執行
+`P302_AI_GUI.exe`。
+
+- GUI 具備 dry-run 模式；勾選後，`run_deployment.py` 只計算與記錄決策，不會寫出 `Command.txt`。
+- 沒有硬體或廠商軟體時仍可開啟 GUI。若要展示動態決策流程，仍需提供代表性的 `Data.txt` 並讓 GUI 指向該資料位置；dry-run 只阻止命令寫入，不會憑空產生量測資料。
+- 該 release **不在 repository，也不在 GitHub**，只存在實驗電腦。要在其他機器展示必須整包複製，`_internal/` 不可拆分或只取 exe。
+- 它是 P302 的成果，與 newHW 無關。展示時須明確說明，避免被理解為新硬體已有 GUI。
+
+**限制**：只能證明既有 release 可執行，不能證明目前 source 可重建。
+
+#### 做法二：以現行 source 重新打包，供交接確認（可行，但只跑 PyInstaller）
+
+用途是回答「這份 repository 是否能通過 GUI 建置機制」，屬**交接確認**，不是產生交付物。
+
+**PyInstaller Step 1 硬性需要、但 repository 沒有的 artifacts**
+
+| 需要的東西 | 路徑 | 說明 |
+|---|---|---|
+| 部署用 checkpoint | `experiments/v22_flow_power_limited_gpu300/models/best_sac_model.pth` | 被 `.gitignore` 排除；spec 缺少時直接失敗 |
+| 封存的實驗 config | `experiments/v22_flow_power_limited_gpu300/configs/experiment_config.yaml` | 必須與上述 checkpoint 同批封存，不可用 `configs/config_p302_sim.yaml` 代替；spec 缺少時直接失敗 |
+
+**完整 release 仍需的 artifacts**
+
+| 需要的東西 | 路徑 | 說明 |
+|---|---|---|
+| SoH artifacts | `soh_models/` 或 `core/soh_predictor/model/` 下的 `*.pth`／`*.pkl`／`*.npz` | 不阻擋單獨 PyInstaller Step 1，但 `_deploy.ps1` 的完整性檢查要求至少 3 個檔案；缺少時不能稱為完整 release |
+
+實驗名稱 `v22_flow_power_limited_gpu300` 寫死於 `packaging/build_release.spec` 與 `_deploy.ps1`；改用其他實驗需同步修改兩處。
+
+> **不要用 `core/verify_deployment.py` 驗證 v22 checkpoint。**
+> 該腳本目前寫死舊 `experiments/p302_sim_v1`、`ACTION_DIM = 1` 與
+> `HIDDEN_DIM = 128`，不符合 v22 的 2D power／flow policy，不能作為現行 checkpoint 驗收工具。
+
+**執行方式：只跑 Step 1，不要執行 `_deploy.ps1`**
+
+```powershell
+py -m PyInstaller --clean --noconfirm packaging\build_release.spec
+```
+
+產出停在 `dist\P302_AI_GUI\`，不觸及既有 release。
+
+**不要直接執行 `_deploy.ps1`。** 該腳本 Step 3 會先刪除或改名
+`Microgrid_AI\release_v22_flow_power_limited`，再把新建置複製過去。在新版本尚未通過實驗電腦驗收前執行，會破壞目前唯一可用的 release，與本專案「新版本未測試完成前不要覆蓋目前可用的 release」的規定衝突。
+
+若確定要走完整流程，必須先另行備份既有 release 資料夾。
+
+**已驗證與未驗證**
+
+- **已驗證**（Linux、代用 checkpoint、PyInstaller 6.22.2）：spec 可被 PyInstaller 正確解析，Analysis、PYZ、EXE 三階段皆完成；hidden imports 可解析；`control/`、`core/`、`configs/`、`models/`、`load_pattern.txt` 可收入 `_internal/`。
+- **確認為設計行為**：spec 的 `excludes` 排除 `gymnasium`，而 `core/microgrid_env.py` 依賴它；但目前部署執行路徑（`control/`、`gui/`）沒有檔案 import `microgrid_env`，該模組僅以資料檔隨附，執行期不會在目前路徑觸發。
+- **未驗證**：Windows 平台由目前 source 實際建置、真實 checkpoint 載入、GUI 啟動、與廠商軟體的 `Data.txt`／`Command.txt` 往返、實驗電腦硬體驗收。
+
+**機制 smoke 通過不等於 release 可交付。** 完成建置後仍須依
+[`release_manifest.md`](release_manifest.md) 完成驗收，才能將新版本設為正式 release。
+
+#### 做法三：把 newHW checkpoint 餵入 P302 打包鏈（不可行）
+
+此路不通，且會產生看似可用、實際錯誤的產物：
+
+1. **動作維度不符**。newHW 是 1D `[power_kw]`，P302 v22 是 2D `[power_kw, flow_fraction]`，checkpoint 張量形狀直接對不上。
+2. **物理與控制語意不符**。P302 部署包含 flow／pump、solo-discharge guard 與 P302 情境碼；newHW 為 LFP、無 pump，且目前環境建立在離網推論上，兩者不能互換。
+3. **通訊協定不存在**。即使打包成功，`control/io_protocol_newHW.py` 仍拋 `NotImplementedError`。P302 的 `Data.txt`／`Command.txt` 是廠商定義的介面，不可假設新硬體沿用。
+
+若強行把 spec／script 改指向 newHW config，`_deploy.ps1` 第 4 步還會檢查
+`use_flow_rate_action: true` 與 `flow_limits_available_power: true`；newHW config
+不符合這兩項 P302 invariant，會輸出 warning 並把 `$allOK` 設為 false。
+
+**建議**
+
+| 目的 | 採用 |
+|---|---|
+| 向他人展示 GUI 與部署行為 | 做法一 |
+| 確認 repository 可通過 GUI 建置機制（交接確認） | 做法二，只跑 PyInstaller |
+| 讓 newHW 進入部署 | 皆不可行；等硬體端提供 I/O 規格 |
+
+newHW 的站④不是「尚未完成」，而是「在取得 I/O 規格前無法開始」。這是外部阻擋，不是進度落後。
+
 ---
 
 ## 12. 不在本流程範圍內
