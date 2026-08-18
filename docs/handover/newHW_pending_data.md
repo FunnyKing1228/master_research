@@ -24,7 +24,7 @@
 - [ ] `TODO(newHW)` 確認 reconstructed SoC 初始 anchor；資料診斷暫用 1.0，模擬 reset 暫用 0.90。
 - [ ] `TODO(newHW)` 確認 round-trip efficiency；目前暫用 0.95。
 - [ ] `TODO(newHW)` 重新量測實際可用容量；0.20 kWh 假設下連續積分最低達 -1.605，與完整 47 小時軌跡不相容。
-- [ ] `TODO(newHW)` 決定正式 SoC 上下限與 voltage cutoff；目前 `0.10–0.90` 只是保守 smoke 假設。
+- [ ] `TODO(newHW)` 決定正式 SoC 上下限與 voltage cutoff；原 `0.10–0.90` 是保守 smoke 假設，2026-08-18 另依使用者決定完成 `0.20–0.80` 隔離試驗，但後者仍不是 BMS／cell 驗收門檻。
 - [ ] `TODO(newHW)` 決定正式 battery charge/discharge power；目前分別以 0.129 kW PV 實測峰值與 35.7 W 負載狀態作暫定上限。
 - [ ] `TODO(newHW)` 決定 PV availability 定義；processed CSV 暫以 1 W 作資料標記，但環境使用連續 PV power。
 - [ ] `TODO(newHW)` 釐清不同能量帳版本：目前 processed CSV 為 load `1.3254 kWh`、PV `0.8341 kWh`、比例 `62.93%`、raw gap `0.4913 kWh`，與先前「PV 約 55%、gap 約 0.650 kWh」不一致。
@@ -32,8 +32,8 @@
 ## 阻擋 reward／訓練定案
 
 - [ ] `TODO(newHW)` 由人類決定優先目標與權重：供電可靠度、夜間存活、BMS 保護、深度循環與 PV curtailment。
-- [ ] `TODO(newHW)` `42.50%` served-energy 結果尚未釐清是訓練不足、reward／action 語意或環境限制；接手者應先在相同資料、初始 SoC 與限制下跑 PV-only、固定規則／greedy oracle、always-discharge 等非學習策略，逐步比較 raw／safe／applied action、served energy、unmet load 與期末 SoC，再決定是否重訓。
-- [ ] `TODO(newHW)` best 與 final 兩個 checkpoint 的 SafetyNet 介入率相差約 18 倍（4.8% vs 88.3%），但 served energy fraction 與 unmet load 完全相同（42.50%／0.7620 kWh）。在 terminal-SoC-neutral 可持續上界 53.97% 下仍有約 152 Wh 空間，兩個差異極大的策略不應未經解釋地產生相同能源結果。輔證是 evaluation reward 長期停在約 `-1385.44`，且 best checkpoint 在第一次評估即保存、後續未被超越，顯示 50 episodes 沒有可確認的實質學習。此異常可能是：(a) action 沒有實際影響環境的動作路徑斷裂；或 (b) 訓練不足。接手者第一步應在完全相同資料、初始 SoC 與限制下，分別以 action 恆為 0、恆為最大充電、恆為最大放電跑 rollout；若三者 served energy fraction 都是 42.50%，優先查 action→SafetyNet→environment→applied action 路徑；若結果明顯不同，再歸入訓練／reward 問題。
+- [x] `42.50%` 異常已於 2026-08-18 完成技術診斷。相同資料、初始 SoC 與限制下：action 恆 0 為 31.04%、恆最大放電為 42.50%；從 SoC=0.10 恆最大充電可充至 0.90；依 PV surplus 充電／缺電放電的固定規則為 58.65%。因此 action→SafetyNet→environment→applied action 路徑有效，原 50-episode best／final 相同的主因是訓練不足，不是環境無法充電。
+- [ ] `TODO(newHW)` 300-episode 診斷訓練的 best checkpoint 在相同 in-sample 47 小時資料達 56.93%，有 29 個實際充電 steps、充電 0.3116 kWh、SafetyNet 介入 4.79%，但仍不可視為通過：reward 與硬體限制未定案、沒有 held-out 日期、不能跑 3 日／5 日，而且 final checkpoint 只有 52.98%，顯示訓練仍不穩定。
 - [ ] `TODO(newHW)` 定義是否允許可控卸載（load shedding）及其優先級；目前動作只有 battery power，環境不能主動關閉負載。
 - [ ] `TODO(newHW)` 確認白天 PV 對負載、充電及 curtailment 的真實控制拓撲。
 - [ ] `TODO(newHW)` 提供至少涵蓋不同天氣與負載狀態的長期連續資料。
@@ -67,19 +67,26 @@
 - 原始資料：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\data\newHW\raw\Data140826.csv`
 - processed dataset：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\data\newHW\processed\training_newHW_15min.csv`
 - oracle trace：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\data\newHW\processed\energy_oracle_trace_newHW.csv`
-- best checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\models\best_sac_model.pth`
-- final checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\models\final_sac_model.pth`
-- 完整 experiment：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\`
+- 歷史 50-episode best checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\models\best_sac_model.pth`
+- 歷史 50-episode final checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\models\final_sac_model.pth`
+- 歷史完整 experiment：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_provisional_50ep_s42\`
+- 最新 20–80% best checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_soc20_80_diag300_s42\models\best_sac_model.pth`
+- 最新 20–80% final checkpoint：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_soc20_80_diag300_s42\models\final_sac_model.pth`
+- 最新完整 experiment：`C:\Users\Administrator\Downloads\conformal-microgrid-rl\experiments\newHW_lfp_soc20_80_diag300_s42\`
 
 目前取得方式：
 
 1. 向目前專案持有人／本工作站管理者索取，從上述絕對路徑做**私下 artifact 交接**，不可依賴 GitHub；目前 Windows 帳號為 `Administrator`，長期保管人姓名仍待指定。
 2. 原始 CSV 傳輸後核對 SHA256：
    `9ada734a86a8aec822589d402b3ee639b62aa5fa3b7ec16025edf4af55e98881`。
-3. best checkpoint SHA256：
+3. 歷史 50-episode best checkpoint SHA256：
    `e95f3b6ae8e1919b8f99034e9c9018c9ea5c69dd83a829f1b673f681a051ae4a`。
-4. final checkpoint SHA256：
+4. 歷史 50-episode final checkpoint SHA256：
    `11f68fc32a76171771f8b6cdf5be90f7e150769656dff4d1d841fdaa67c827d7`。
-5. 取得 source 後可重新執行 `prepare_data_newHW.py` 核對 processed CSV。
+5. 最新 20–80% best checkpoint SHA256：
+   `92c6ba15228ededf8eec9278e802d8fd544803a4ee01b81b471003255a0016f0`。
+6. 最新 20–80% final checkpoint SHA256：
+   `b11e3a892ae3a55af3338136102d8e46354d95cb7bdc3fae4908f5442e8bedd5`。
+7. 取得 source 後可重新執行 `prepare_data_newHW.py` 核對 processed CSV。
 
 - [ ] `TODO(newHW)` 指定長期、具權限控管的 private artifact 保存位置與交接負責人；目前唯一明確位置是本工作站。

@@ -54,7 +54,7 @@ tools/plotting_handoff/  可攜式四面板繪圖工具與小型範例資料
 - Stable pre-measure／probe 已回寫 source 並通過單元測試。
 - 尚未由目前 source 正式重建 GUI release，也尚未完成實驗電腦硬體驗收。
 - 模型是否可部署或可作為論文證據，必須以實驗清冊、跨日驗證與 release manifest 為準，不能只看單日結果或 checkpoint 名稱。
-- newHW 目前僅完成隔離遷移骨架與 in-sample smoke；模型未通過驗證，部署仍被 I/O 規格缺口阻擋。系統為離網架構屬推論而非硬體端確認，詳見生命週期對照。
+- newHW 目前完成隔離遷移骨架與 in-sample 診斷；最新 300-episode／SoC 20–80% 試驗在同一窗口達 finite-window oracle，但 raw policy 仍依賴 SafetyNet，模型尚未通過泛化驗證。部署仍被 I/O 規格缺口阻擋；系統為離網架構屬推論而非硬體端確認，詳見生命週期對照。
 
 ## 基本驗證
 

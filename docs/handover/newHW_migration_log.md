@@ -269,7 +269,7 @@ reward =
 4. 部署停在 I/O 缺失；protocol 骨架只會拋出 `NotImplementedError`，沒有進行 GUI 打包。
 5. migration log、pending data、file changes 三份文件已完成。
 
-> 最終狀態：**newHW 作為新硬體／新資料切入點的交接已完成。** `42.50%` 異常、模型優化、長期資料、泛化驗證與部署 I/O 均已明確移交為後續工作；本次交接不以解決這些問題為完成條件。
+> 最終狀態：**newHW 作為新硬體／新資料切入點的交接已完成。** 原 `42.50%` 異常已於後續診斷確認為 50 episodes 訓練不足；模型定案、長期資料、泛化驗證與部署 I/O 仍是後續工作。
 
 ## 2026-08-17：白名單發布準備
 
@@ -278,3 +278,57 @@ reward =
 - 明確排除所有 CSV、checkpoint、完整 experiment 與既有檔案修改；4 個 summary 檔最大為 250,579 bytes，皆小於 1 MB。
 - 在發布 clone 執行 `tests/test_newHW.py`，結果為 `7 passed`；README 未修改，入口連結等待人類決定並應另開獨立 commit。
 - 本紀錄完成時尚未 commit 或 push；依要求停在 staged review，待人類確認 `git status` 與 `git diff --cached --stat`。
+
+## 2026-08-18：固定策略診斷與 300-episode 對照
+
+### 固定策略結果
+
+- 保持 `Data140826.csv` 的 188 bins、初始 SoC=0.90、暫定 reward、SafetyNet 與所有物理參數不變。
+- action 恆 0：served energy `31.0366%`、unmet `0.914040 kWh`、期末 SoC `0.90`。
+- action 恆最大充電：初始 SoC 已在 0.90 上限，因此 188 steps 均被 SafetyNet 投影為 0，結果與恆 0 相同；另以 SoC=0.10 做充電路徑控制測試，可實際充電 `0.168421 kWh` 並回到 SoC=0.90。
+- action 恆最大放電：served energy `42.5049%`、unmet `0.762040 kWh`、期末 SoC `0.10`，精確重現原 final checkpoint。
+- 固定規則「PV surplus 時最大充電、缺電時最大放電」：served energy `58.6472%`、unmet `0.548090 kWh`、期末 SoC `0.573946`，等於目前 finite-window chronological oracle。
+- 結論：正、負與零 action 均會改變 applied action、SoC 與 served energy；action→SafetyNet→environment 路徑沒有斷裂。原 50-episode checkpoint 未在白天充電，是訓練不足。
+
+### 隔離延長訓練
+
+- 不修改 source config，以 `--episodes 300` 建立新 experiment：`experiments/newHW_lfp_provisional_diag300_s42/`。
+- 只改訓練長度 50→300；reward、seed、資料、SafetyNet 與硬體假設全部保持不變，避免混入第二個變因。
+- best 在 episode 180 evaluation 達 `-869.85` 後保存；final 並非最佳。
+- best in-sample rollout：served energy `56.9260%`、unmet `0.570903 kWh`、finite-window oracle 達成率 `97.07%`、SafetyNet 介入 `4.79%`、期末 SoC `0.573946`。
+- best 有 29 個正 applied-action steps，實際充電 `0.311564 kWh`；SoC 會在兩段 PV surplus 期間上升，證明已學到充電行為。
+- final in-sample rollout：served energy `52.9769%`、unmet `0.623244 kWh`、SafetyNet 介入 `6.91%`；低於 best，顯示訓練後段仍有退化／不穩定。
+- best checkpoint SHA256：`90e17537877ed361741c1a4852072bd18993d048c48e9868661470d9469783d7`。
+- final checkpoint SHA256：`f425e4fb29e3594522d2eb7ab58ed32f8e9ff1b7c63f433202e220a9cc4339da`。
+
+### 解讀限制
+
+- 此結果只回答「充電路徑是否有效」及「50 episodes 是否不足」，不改變交接狀態。
+- 300 episodes 仍重複使用同一段 47 小時訓練資料，屬高度 in-sample；不構成泛化、3 日／5 日、硬體或部署驗證。
+- 56.93% 高於 terminal-SoC-neutral 53.97%，是因 rollout 從 SoC=0.90 結束於 0.573946，消耗了窗口外帶入的初始電量；不可用來宣稱可持續供電率。
+- reward 權重、離網架構、BMS／MPPT 限制、SoC 範圍與固定 28.2 W 負載仍為 `TODO(newHW)`，不得將此 checkpoint 升格為 deployment candidate。
+
+## 2026-08-18：rollout 圖可讀性重畫
+
+- 修改 `data/scripts/newHW/rollout_newHW.py` 的圖表呈現，不改 rollout 數據、環境、checkpoint 或指標計算。
+- panel 1 改為 PV generation、load demand、power delivered to load 與紅色 unserved gap；紅色只填在「已供應」與「需求」之間，並把 legend 移到 panel 外，避免遮住資料。
+- panel 2 保留 SoC，補上明確標題；panel 3 補上「正值=充電、負值=放電」與 0 W 基準線。
+- panel 4 移除難以直讀的四條 unmet／curtailment 累積線，改為總負載需求、agent 已供應、未供應及 finite-window oracle 已供應的累積能源帳，並標出期末 kWh。
+- 全圖字體相對原版增加 2 pt，畫布同步由 14×13 放大為 16×15 inches；panel 3／4 legend 另行移位，避免放大後遮住曲線或摘要框。
+- 重新產生 50-episode 與 300-episode experiment 的 best／final 四張 rollout 圖；數值 summary 未改變。
+
+## 2026-08-18：SoC 20–80% 隔離試驗與結果欄位
+
+- 新增 `configs/config_newHW_soc20_80_sim.yaml`，不覆寫原 10–90% config；只把 SoC operating range 改為 0.20–0.80、initial SoC 改為 0.80，並固定 300 episodes。
+- 20–80% 是使用者指定的操作範圍，不是已由 BMS／cell 規格驗證的保護門檻，仍標記 `TODO(newHW)`。
+- 新 experiment：`experiments/newHW_lfp_soc20_80_diag300_s42/`；資料、reward、seed、功率限制與 SafetyNet 其餘設定維持不變。
+- best in-sample：served `52.9131%`，等於同範圍 finite-window oracle；unmet `0.624090 kWh`、realized violations `0`、attempted violations／SafetyNet projections `105/188`（55.85%）、期末 SoC `0.473946`。
+- final in-sample：served `52.8675%`，比 oracle 少 `0.000604 kWh`；unmet `0.624694 kWh`、realized violations `0`、attempted violations／SafetyNet projections `48/188`（25.53%）、期末 SoC `0.477123`。
+- best 在 episode 30 保存；其供電略高但高度依賴 SafetyNet。final 幾乎維持相同供電，attempted/projection 較低，因此兩者都需保留，不可只因檔名 `best` 就宣稱行為較佳。
+- best SHA256：`92c6ba15228ededf8eec9278e802d8fd544803a4ee01b81b471003255a0016f0`。
+- final SHA256：`b11e3a892ae3a55af3338136102d8e46354d95cb7bdc3fae4908f5442e8bedd5`。
+- rollout JSON／圖新增 operating SoC bounds、attempted／realized violations 與 SafetyNet 介入；SoC guide 不再硬編碼 10–90%。
+- Profit 明列為 `N/A (off-grid; no tariff/revenue model)`，JSON 使用 `profit: null` 與明確 status；不以數值 0 假裝已完成經濟模型。
+- training result 重畫為 provisional objective 原始值／20-episode mean／deterministic evaluation、attempted／realized out-of-bounds、SafetyNet intervention rate 與 episode SoC min／mean／end；舊的 action-magnitude panel 移除。
+- 圖上明確註記負值是 objective score 而非金錢。20–80% 試驗的 evaluation 約在 episode 20–30 提升至 `-964` 後停滯；attempted violations 的 20-episode mean 從約 137 降至約 25，realized violations 維持 0。
+- 此結果仍是相同 47 小時資料的 in-sample trial，不能視為 3 日／5 日、泛化或部署驗證。

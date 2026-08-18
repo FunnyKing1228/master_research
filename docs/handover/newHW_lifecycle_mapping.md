@@ -163,7 +163,7 @@ data/         core/           experiments/         packaging/         tools/plot
 |---|---|---|
 | 入口 | [`experiments/README.md`](../../experiments/README.md) | `data/scripts/newHW/rollout_newHW.py` |
 | 標準流程 | 單日 → 連續 3 日 → 連續 5 日，跨日不重設 SoC | **無法執行** |
-| 產物 | `experiments/<name>/` | `experiments/newHW_lfp_provisional_50ep_s42/` |
+| 產物 | `experiments/<name>/` | 歷史：`newHW_lfp_provisional_50ep_s42/`；最新診斷：`newHW_lfp_soc20_80_diag300_s42/` |
 
 **改了什麼**
 
@@ -172,12 +172,23 @@ data/         core/           experiments/         packaging/         tools/plot
   「此為 in-sample，不構成泛化驗證」。
 - 未臆造 3 日／5 日結果。
 
-**目前結果**
+**歷史 50-episode 結果**
 
 - best 與 final 的 served energy fraction 皆為 42.50%、unmet load 皆為 0.7620 kWh。
 - 可持續上界為 53.97%，仍有約 152 Wh 空間。
 - 兩者 SafetyNet 介入率相差 18 倍（4.8% vs 88.3%），卻產出相同結果。
 - evaluation reward 全程停留約 −1385.44，best 在第一次評估即保存後未再被超越。
+- 固定策略對照已確認 action→SafetyNet→environment 路徑有效；此結果是訓練不足的歷史失敗基線，不再代表最新模型狀態。
+
+**最新 300-episode／SoC 20–80% 診斷**
+
+- best served energy fraction 為 52.9131%，等於同範圍 finite-window oracle；SoC 實際使用完整 20–80% 操作範圍。
+- best realized violations 為 0，但 attempted violations／SafetyNet projections 為 105/188（55.85%），表示 raw policy 仍高度依賴安全層。
+- final served energy fraction 為 52.8675%，只比 oracle 少 0.000604 kWh；realized violations 為 0，attempted／projected 為 48/188（25.53%）。
+- final 幾乎維持相同供電且較少依賴 SafetyNet；因此 `best` 與 `final` 都需保留比較，不能只依 checkpoint 名稱決定。
+- terminal-SoC-neutral 上界為 48.2390%；best 從 SoC 80% 結束於約 47.4%，因此 52.9131% 包含窗口開始時帶入的電量，不是可持續供電率。
+- Economic profit 為 N/A：目前推論為離網，沒有 tariff／revenue model；圖中的負值是 provisional objective score，不是金錢。
+- 以上仍只是在同一份 47 小時訓練資料上的 in-sample 診斷，不構成泛化、3 日／5 日或部署驗證。
 
 **阻擋項**
 
@@ -187,12 +198,11 @@ data/         core/           experiments/         packaging/         tools/plot
 | 未參與訓練的獨立日期 | 沒有 held-out 資料就無法判斷泛化 | 需長期連續蒐集 |
 | newHW 的通過標準 | unmet load、BMS event、SoC、curtailment、SafetyNet 介入的門檻值需人為訂定 | 計畫主持人決定 |
 
-**待查項（可在程式端進行，留給接手者）**
+**已完成的技術診斷**
 
-> best 與 final 結果完全相同的現象尚未釐清。
-> 建議先跑固定策略對照測試：動作恆 0、恆最大充電、恆最大放電。
-> 若三者 served energy fraction 皆為 42.50%，即為動作路徑問題；
-> 若明顯不同，則屬訓練不足。此測試不需要新資料，數分鐘可完成。
+> 固定策略與 300-episode 對照已排除動作路徑斷裂。
+> 最新模型已能在目前假設下接近 finite-window oracle；
+> 剩餘問題是 SafetyNet 依賴、目標函數未定案、資料不足與缺少跨日泛化驗證。
 
 ---
 
@@ -259,14 +269,15 @@ data/         core/           experiments/         packaging/         tools/plot
 
 ### 結論
 
-newHW 目前完成的是**隔離的遷移骨架與誠實的失敗 smoke**。
-它證明了程式管線在新硬體上可執行、資料處理可重現、且未污染既有 P302 系統
+newHW 目前完成的是**隔離的遷移骨架與有限的 in-sample 診斷**。
+50-episode 歷史模型沒有實質學習；後續 300-episode／SoC 20–80% 試驗已在同一窗口達到
+finite-window oracle，證明資料、訓練、充放電與 SafetyNet 管線可執行，且未污染既有 P302 系統
 （175 項 P302 regression 全數通過）。
 
-**但它不構成模型驗證，也不是部署候選。**
+**但它仍不構成模型驗證，也不是部署候選。**
+最新 best raw policy 有 55.85% steps 需要 SafetyNet 投影；沒有 held-out 日期、3 日／5 日資料或硬體端確認的限制。
 
-整圈五站的阻擋點全部位於程式端之外——硬體規格、感測器修復、長期資料蒐集、
-以及研究方向決策。這些在取得之前，任何程式端的努力都只能產生無法驗證的結果。
+整圈五站的主要阻擋仍是硬體規格、感測器修復、長期資料蒐集、I/O 規格與研究方向決策。
+在這些外部輸入取得前，可以改善訓練穩定性與降低 SafetyNet 依賴，但無法證明泛化或部署安全。
 
-接手者可以立即進行的工作，只有站 3 標記的固定策略對照測試。
-其餘各站需依上表向對應負責方取得資訊後才能推進。
+接手者可立即比較 best／final、多 seed 與 SafetyNet 依賴；其餘各站仍需依上表向對應負責方取得資訊後才能推進。

@@ -26,3 +26,5 @@
 | `data/scripts/newHW/rollout_newHW.py` | 既有 rollout 的 raw/safe/applied 審計概念 | newHW 47 小時 in-sample audit、reward 定義、物理 oracle、loss-of-load 與百瓦尺度圖 | 同時顯示硬體上限與 agent 距離，不只畫 applied action |
 | `tests/test_newHW.py` | newHW environment/protocol contract | 驗證 1D、無 grid、unmet load、PV charge limit、I/O 明確未實作 | 保護隔離語意 |
 | `experiments/newHW_lfp_provisional_50ep_s42/` | newHW config、environment、shared SAC components | 50-episode 暫定訓練、best/final/checkpoints、logs、metrics 與 in-sample rollout | 證明流程可執行；不代表模型通過 |
+| `configs/config_newHW_soc20_80_sim.yaml` | `configs/config_newHW_sim.yaml` | 隔離的 SoC 20–80%、initial SoC 80%、300-episode 診斷設定 | 保留原 10–90% 實驗可重現，同時測試使用者指定操作範圍 |
+| `experiments/newHW_lfp_soc20_80_diag300_s42/` | 20–80% 診斷 config 與既有 newHW 訓練入口 | best/final checkpoints、training metrics 與 in-sample rollout | 比較 20–80% 操作範圍；仍非泛化或部署驗證 |
