@@ -6,6 +6,52 @@
 >
 > **本頁只涵蓋站①②③（in-sample）。站④部署與站⑤現場繪圖被 I/O 規格缺口阻擋，不在範圍內。**
 
+## 給 AI 助手的執行摘要
+
+> 若你是 AI 助手（Cursor、Claude Code 等）被要求復刻本流程，先讀本節，可省去大量探索。
+
+**環境前提**
+
+- 本流程在使用者本機執行，直接讀寫 repository。若你在無法存取本機檔案的沙盒環境，先向使用者索取 `Data140826.csv`。
+- 安裝 `pandas<3`。pandas 3.x 起 `to_datetime` 預設單位由奈秒改為微秒，會使 `prepare_data_newHW.py` 的 `first_night_independent_discharge_wh` 少算 1000 倍。此欄位僅供人工查閱，不影響資料集、訓練與 rollout，但會讓 `git status` 顯示該 JSON 被改動。
+
+**一次跑完的最短路徑**（Windows PowerShell；Linux／macOS 把 `py` 換 `python3`、路徑分隔符換 `/`、移除行尾反引號）
+
+```powershell
+py -m pip install torch numpy "pandas<3" pyyaml matplotlib gymnasium scipy pytest
+New-Item -ItemType Directory -Force data\newHW\raw
+copy <來源>\Data140826.csv data\newHW\raw\Data140826.csv
+
+py data\scripts\newHW\prepare_data_newHW.py --input data\newHW\raw\Data140826.csv --output data\newHW\processed\training_newHW_15min.csv --summary data\newHW\processed\newHW_data_quality_summary.json
+py core\train_sac_microgrid_newHW.py --config configs\config_newHW_soc20_80_sim.yaml --name newHW_repro_s42 --episodes 5
+py core\train_sac_microgrid_newHW.py --config configs\config_newHW_soc20_80_sim.yaml --name newHW_repro_s42_full
+py data\scripts\newHW\rollout_newHW.py --experiment newHW_repro_s42_full --model best_sac_model.pth
+py data\scripts\newHW\rollout_newHW.py --experiment newHW_repro_s42_full --model final_sac_model.pth
+```
+
+第一次訓練刻意只跑 5 episodes 做 smoke，約 6 秒即產出結構相同的 best／final，可在投入完整 300 episodes（約 3 分鐘）前先確認環境無誤。
+
+**產出位置**（供 AI 快速定位）
+
+```text
+experiments/<name>/results/in_sample_rollout_newHW/
+  best_sac_model_rollout_newHW.png     ← 四面板 rollout 圖，通常是使用者要看的東西
+  best_sac_model_summary_newHW.json    ← served_energy_fraction 等指標
+  best_sac_model_audit_newHW.csv       ← 逐步稽核紀錄
+  final_sac_model_*                    ← final checkpoint 的同組三個檔
+```
+
+**不需要資料也能先做的事**
+
+`tests/test_newHW.py`（7 passed）與三個 P302 regression 檔（175 passed）在乾淨 clone 上**不需要任何 newHW 資料即可執行**。等待原始 CSV 期間可先完成安裝與這兩組測試。
+
+**禁止事項**
+
+- 不得修改 `core/microgrid_env.py`、`core/train_sac_microgrid.py`、`configs/experiments/p302/**`、`control/io_protocol.py`。
+- 不得調整 newHW config 的物理參數或 reward 權重；那是研究決策，非實作選擇。
+- 不得為湊既有數字而重跑挑結果或改 seed。
+- 未獲明確要求不得 `git commit`。
+
 ---
 
 ## 0. 前置需求
@@ -280,7 +326,55 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 
 ---
 
-## 10. 不在本流程範圍內
+## 10. 跨環境重現的已知落差
+
+同一 seed 在不同作業系統、PyTorch 版本或 CPU／GPU 上不保證位元級重現。三次已知執行的對照：
+
+| 指標 | 原始紀錄 | Windows／CUDA | Linux／CPU |
+|---|---:|---:|---:|
+| best served energy fraction | 52.9131% | 52.9131% | 52.9131% |
+| best SafetyNet projection | 55.85% | 55.85% | 55.85% |
+| final served energy fraction | 52.8675% | 52.3663% | 52.8675% |
+| final SafetyNet projection | 25.53% | 61.17% | 55.32% |
+| realized violations（全部） | 0 | 0 | 0 |
+
+**判讀方式**
+
+- served energy fraction 貼近 finite-window oracle 天花板，三次皆穩定；但正因為飽和，它**對上既有紀錄不構成重現證據**。
+- SafetyNet projection fraction 三次三個數字，跨環境明顯不穩定，**不應單獨作為選模依據**。
+- 出現第四個不同的 final 數字屬預期行為。如實記錄，不要調參或重跑挑結果。
+
+---
+
+## 11. 站④打包的現況
+
+本節僅供說明，**不是可執行步驟**。
+
+**P302 打包鏈**
+
+`packaging/build_release.spec` 與 `_deploy.ps1` 的 source 完整，所引用的 control、core、gui、soh_predictor、config、load_pattern 路徑全部存在。另一次 Linux 代用 checkpoint 的 PyInstaller 機制 smoke 已完成 Analysis、PYZ、EXE 三階段，hidden imports 可解析，關鍵檔案可收入 `_internal/`。這不等同於使用真實 checkpoint 的正式 release 重建或實驗電腦驗收。
+
+已確認的設計行為：spec 的 `excludes` 排除 `gymnasium`，而 `core/microgrid_env.py` 需要它；但部署執行路徑（`control/`、`gui/`）沒有檔案 import `microgrid_env`，該模組僅以資料檔形式隨附，故不會在目前執行路徑觸發缺少 `gymnasium`。此為刻意設計，非已知缺陷。
+
+**仍缺的 artifacts**（皆被 `.gitignore` 排除，需另行取得）
+
+- `experiments/v22_flow_power_limited_gpu300/models/best_sac_model.pth`
+- `experiments/v22_flow_power_limited_gpu300/configs/experiment_config.yaml`
+- `soh_models/` 或 `core/soh_predictor/model/` 之下的 SoH artifacts
+
+實驗名稱 `v22_flow_power_limited_gpu300` 寫死於 spec 與 `_deploy.ps1`；使用其他實驗需同步修改兩處。
+
+**newHW 沒有打包路徑**
+
+`packaging/` 與 `_deploy.ps1` 不含任何 newHW 內容，`control/io_protocol_newHW.py` 仍拋 `NotImplementedError`。newHW 產出的 checkpoint **無法**餵入 P302 打包鏈。站④對 newHW 而言不是「尚未完成」，而是「在取得硬體端 I/O 規格前無法開始」。
+
+**尚未驗證**
+
+從目前 source 以真實 checkpoint 重建 GUI release，並在實驗電腦完成硬體驗收——此事尚未有人執行。不得將「spec 機制已驗證」描述為「release 已可交付」。正式狀態仍以 [`release_manifest.md`](release_manifest.md) 為準。
+
+---
+
+## 12. 不在本流程範圍內
 
 - 站④部署與 GUI 打包：`control/io_protocol_newHW.py` 只是會拋 `NotImplementedError` 的骨架，等硬體端／廠商提供 I/O 規格。
 - 站⑤現場繪圖：現場 CSV 格式因站④未開始而尚不存在。
