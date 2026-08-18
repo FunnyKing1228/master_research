@@ -13,14 +13,14 @@
 | 項目 | 需求 |
 |---|---|
 | Python | 3.10 以上 |
-| 必要套件 | `torch numpy pandas pyyaml matplotlib gymnasium scipy pytest` |
+| 必要套件 | `torch numpy pandas<3 pyyaml matplotlib gymnasium scipy pytest` |
 | 原始資料 | `Data140826.csv`，SHA256 `9ada734a86a8aec822589d402b3ee639b62aa5fa3b7ec16025edf4af55e98881` |
 | 工作目錄 | **必須在 repository root 執行**，所有相對路徑以此為基準 |
 
 不要直接 `pip install -r requirements.txt`。該檔含 `pyinstaller`、`pvlib`、`openmeteo-requests`、`stable-baselines3`、`python-microgrid`，全部是 P302 部署或歷史流程用的，newHW 路徑一律不需要。
 
 ```powershell
-py -m pip install torch numpy pandas pyyaml matplotlib gymnasium scipy pytest
+py -m pip install torch numpy "pandas<3" pyyaml matplotlib gymnasium scipy pytest
 ```
 
 `python-microgrid` 未安裝時，執行會印出一行 `Info: python-microgrid not installed...`。**這是預期行為，不是錯誤**，newHW 環境不使用該套件。
@@ -67,6 +67,8 @@ py data\scripts\newHW\prepare_data_newHW.py `
 - `training_newHW_15min.csv` 共 189 行（1 行 header + 188 個 15 分鐘 bins）。
 - summary JSON 的 `source_sha256` 與步驟 1 的雜湊一致。
 - summary JSON 的 `notes` 應包含 `Load_W was replaced by the supplied 28.2 W regression-derived baseline.`
+
+**已知瑕疵**：`prepare_data_newHW.py` 換算時間時假設 pandas 的 datetime 單位為奈秒。pandas 3.x 起預設改為微秒，會使 `first_night_independent_discharge_wh` 少算 1000 倍（`0.199` 而非 `199.07`），並讓 `git status` 顯示該 JSON 被改動。**請安裝 `pandas<3`**。此欄位僅供人工查閱，不影響資料集、訓練或 rollout。
 
 ---
 
@@ -123,7 +125,18 @@ py data\scripts\newHW\rollout_newHW.py `
 
 **兩個參數都不是路徑**：`--experiment` 傳實驗**名稱**（程式自行組出 `experiments/<name>/`），`--model` 傳 `models/` 底下的**檔名**。傳路徑會失敗。
 
-`best` 與 `final` 都要各跑一次並保留比較。最新診斷顯示 final 幾乎維持相同供電但明顯較少依賴 SafetyNet，因此不能只憑 checkpoint 名稱選模。
+`best` 與 `final` 都要各跑一次並保留比較。final 的供電與 SafetyNet 依賴率可能隨執行環境變動，因此不能只憑 checkpoint 名稱或單次 SafetyNet 數字選模。
+
+產物位於：
+
+```text
+experiments/<name>/results/in_sample_rollout_newHW/
+  best_sac_model_rollout_newHW.png      ← 教授要看的圖
+  best_sac_model_summary_newHW.json     ← 數字在這
+  best_sac_model_audit_newHW.csv
+```
+
+執行 final rollout 時，同一目錄會產生對應的 `final_sac_model_*` 三個檔案。
 
 執行時可能先出現 `Gym has been unmaintained since 2022...`。這來自共用訓練
 模組的相依 import；本次 Windows 實測仍可正常完成 rollout。它不是
@@ -198,6 +211,7 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 | 整份 CSV 被解析成單一欄位 | 直接讀原始 CSV 未經 prepare | 原始 header 被包成單一 quoted field，必須經 prepare 處理 |
 | `Info: python-microgrid not installed` | 選用套件未裝 | 預期行為，忽略 |
 | `Gym has been unmaintained since 2022...` | 共用模組仍觸發舊 Gym 的相依 import | 本次實測不阻擋 newHW；先記錄，不要為此修改 P302 共用檔 |
+| `first_night_independent_discharge_wh` 為 `0.199` | 使用 pandas 3.x，datetime 單位由奈秒改為微秒 | 改裝 `pandas<3` 後重新執行資料準備 |
 | `Action dim: 2` | 載到 P302 環境 | 檢查 `--config` 是否指向 newHW config |
 
 ---
