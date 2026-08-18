@@ -1,5 +1,7 @@
 # newHW 遷移紀錄
 
+> 建議先讀 [`newHW_lifecycle_mapping.md`](newHW_lifecycle_mapping.md) 了解整體架構。
+
 > 狀態：**交接完成，不代表 newHW 實作完成。** 現況、可重現入口、暫定 smoke、異常與阻擋資料均已留下；模型優化與硬體部署由接手者續辦。此工作只新增 `_newHW` 或 `data/newHW`／`experiments/newHW_*` 內容，不修改既有 P302 檔案。
 
 ## 2026-08-17：啟動與邊界確認

@@ -1,5 +1,7 @@
 # newHW 新增檔案對照
 
+> 建議先讀 [`newHW_lifecycle_mapping.md`](newHW_lifecycle_mapping.md) 了解整體架構。
+
 > 本遷移不修改任何既有 P302 檔案。表格在工作進行中持續補充。
 
 | 新檔案 | 複製自／依據 | 修改內容 | 修改原因 |

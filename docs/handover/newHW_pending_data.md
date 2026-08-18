@@ -1,9 +1,12 @@
 # newHW 待補資料與阻擋項目
 
+> 建議先讀 [`newHW_lifecycle_mapping.md`](newHW_lifecycle_mapping.md) 了解整體架構。
+
 > 所有未確認值都標記為 `TODO(newHW)`。本頁不得用推估值冒充硬體規格或驗收結果。
 
 ## 阻擋環境定案
 
+- [ ] `TODO(newHW)` **確認系統架構是否確為離網。** 目前 `core/microgrid_env_newHW.py` 的 `grid_kw` 恆為 0、情境碼僅輸出 1 與 4、reward 移除全部 TOU 項目，皆建立在「無市電接入」的推論上。依據為：(a) 原始 CSV 無任何 grid 電流或功率欄位；(b) 資料提供者描述的系統組成僅含 PV、電池、MPPT、BMS 與單一負載；(c) 2026-08-15 01:00–05:00 觀測到 BMS 跳脫後負載實際斷電，若有市電則不應發生。此推論尚未經硬體端確認。若實際存在市電（含未被量測的接入），環境設計需重做。應由硬體端確認。
 - [ ] `TODO(newHW)` BMS 型號、規格書、continuous／charge／cutoff 電流設定值。
 - [ ] `TODO(newHW)` BMS 實際單體低壓保護門檻；目前無法解釋為何 pack 約 25.43 V（3.18 V/cell）即跳脫。
 - [ ] `TODO(newHW)` 8 顆電芯逐顆電壓；用於確認是否有弱電芯或不平衡。

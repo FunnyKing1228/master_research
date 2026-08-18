@@ -10,7 +10,7 @@
 - **AI／維護者**：先讀 [`AGENTS.md`](AGENTS.md)
 - **目前部署與 artifact 狀態**：查閱 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md)
 - **以前遇過的問題與解法**：查閱 [`PROJECT_ISSUES_AND_SOLUTIONS.md`](PROJECT_ISSUES_AND_SOLUTIONS.md)
-- **newHW（離網 LFP）遷移交接**：查閱 [遷移紀錄](docs/handover/newHW_migration_log.md)、[待補資料與私人 artifacts](docs/handover/newHW_pending_data.md)、[新增檔案對照](docs/handover/newHW_file_changes.md)
+- **newHW（LFP，推論為離網、待確認）遷移交接**：先讀 [生命週期對照](docs/handover/newHW_lifecycle_mapping.md)，再依需查閱 [遷移紀錄](docs/handover/newHW_migration_log.md)、[待補資料與私人 artifacts](docs/handover/newHW_pending_data.md)、[新增檔案對照](docs/handover/newHW_file_changes.md)
 
 ## 依工作選入口
 
@@ -54,7 +54,7 @@ tools/plotting_handoff/  可攜式四面板繪圖工具與小型範例資料
 - Stable pre-measure／probe 已回寫 source 並通過單元測試。
 - 尚未由目前 source 正式重建 GUI release，也尚未完成實驗電腦硬體驗收。
 - 模型是否可部署或可作為論文證據，必須以實驗清冊、跨日驗證與 release manifest 為準，不能只看單日結果或 checkpoint 名稱。
-- newHW 目前僅完成隔離遷移骨架與 in-sample smoke；模型未通過驗證，部署仍被 I/O 規格缺口阻擋。
+- newHW 目前僅完成隔離遷移骨架與 in-sample smoke；模型未通過驗證，部署仍被 I/O 規格缺口阻擋。系統為離網架構屬推論而非硬體端確認，詳見生命週期對照。
 
 ## 基本驗證
 
