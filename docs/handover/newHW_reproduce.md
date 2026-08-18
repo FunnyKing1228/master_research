@@ -58,7 +58,7 @@ experiments/<name>/results/in_sample_rollout_newHW/
 
 | 項目 | 需求 |
 |---|---|
-| Python | 3.10 以上 |
+| Python | 已驗證 3.11.9（Windows）與 3.12.3（Linux）；其他版本未測試 |
 | 必要套件 | `torch numpy pandas<3 pyyaml matplotlib gymnasium scipy pytest` |
 | 原始資料 | `Data140826.csv`，SHA256 `9ada734a86a8aec822589d402b3ee639b62aa5fa3b7ec16025edf4af55e98881` |
 | 工作目錄 | **必須在 repository root 執行**，所有相對路徑以此為基準 |
@@ -266,11 +266,20 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 
 ### 環境
 
-- OS：Windows 10 `10.0.22621`
-- Python：3.11.9
-- PyTorch：2.6.0+cu124；CUDA 12.4，訓練使用 `cuda`
-- NumPy 2.3.2、pandas 2.3.1、PyYAML 6.0.2、matplotlib 3.10.5
-- Gymnasium 1.2.0、SciPy 1.16.1、pytest 9.0.2
+| 項目 | 環境 A（Windows，本機實測） | 環境 B（Linux 容器，另一台機器實測回報） |
+|---|---|---|
+| 平台 | Windows 10 `10.0.22621`／CUDA 12.4 | Linux／CPU |
+| Python | 3.11.9 | 3.12.3 |
+| torch | 2.6.0+cu124 | 2.13.0+cu130 |
+| numpy | 2.3.2 | 2.4.4 |
+| pandas | 2.3.1 | 3.0.2（會觸發已知瑕疵） |
+| gymnasium | 1.2.0 | 1.3.0 |
+| 結果 | 全流程通過 | 全流程通過 |
+
+環境 A 另記錄 PyYAML 6.0.2、matplotlib 3.10.5、SciPy 1.16.1、pytest 9.0.2；
+環境 B 未提供這四項版本。Linux 欄位來自另一台機器的實測回報，未在本 Windows
+主機重建。現在僅有上述兩組較新套件組合完成全流程；較舊版本未經測試。本專案沒有
+lockfile，跨機器版本差異仍可能產生類似 pandas datetime 單位變更的相容性問題。
 
 ### 實測結果
 

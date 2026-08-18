@@ -10,7 +10,7 @@
 - **AI／維護者**：先讀 [`AGENTS.md`](AGENTS.md)
 - **目前部署與 artifact 狀態**：查閱 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md)
 - **以前遇過的問題與解法**：查閱 [`PROJECT_ISSUES_AND_SOLUTIONS.md`](PROJECT_ISSUES_AND_SOLUTIONS.md)
-- **newHW（LFP，推論為離網、待確認）遷移交接**：先讀 [生命週期對照](docs/handover/newHW_lifecycle_mapping.md)，再依需查閱 [遷移紀錄](docs/handover/newHW_migration_log.md)、[待補資料與私人 artifacts](docs/handover/newHW_pending_data.md)、[新增檔案對照](docs/handover/newHW_file_changes.md)
+- **newHW（LFP，推論為離網、待確認）遷移交接**：先讀 [生命週期對照](docs/handover/newHW_lifecycle_mapping.md)，再依需查閱 [重現流程](docs/handover/newHW_reproduce.md)、[遷移紀錄](docs/handover/newHW_migration_log.md)、[待補資料與私人 artifacts](docs/handover/newHW_pending_data.md)、[新增檔案對照](docs/handover/newHW_file_changes.md)
 
 ## 依工作選入口
 

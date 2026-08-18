@@ -10,6 +10,12 @@
 
 涉及模型選擇、部署、打包或現場行為時，額外核對 [`docs/handover/release_manifest.md`](docs/handover/release_manifest.md)。
 
+## newHW 固定入口與限制
+
+- newHW 相關任務先讀 [`docs/handover/newHW_lifecycle_mapping.md`](docs/handover/newHW_lifecycle_mapping.md)，確認各站狀態與阻擋方；需要實際執行時再讀 [`docs/handover/newHW_reproduce.md`](docs/handover/newHW_reproduce.md)。
+- 禁止修改 P302 檔案，亦不得調整 newHW 物理參數或 reward 權重；後者屬研究決策。
+- newHW 站④部署被 I/O 規格缺口阻擋；規格取得前不要嘗試部署或沿用 P302 打包鏈。
+
 ## 固定規則
 
 - 先執行 `git status --short --untracked-files=all`，保留所有既有未提交內容；未獲明確要求不得 commit。
