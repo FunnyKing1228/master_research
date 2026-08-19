@@ -13,12 +13,13 @@
 **環境前提**
 
 - 本流程在使用者本機執行，直接讀寫 repository。若你在無法存取本機檔案的沙盒環境，先向使用者索取 `Data140826.csv`。
+- 安裝 `numpy>=2`；`prepare_data_newHW.py` 使用 NumPy 2.0 才新增的 `np.trapezoid`。訓練入口另會在模組層載入 `psutil`，不可省略。
 - 安裝 `pandas<3`。pandas 3.x 起 `to_datetime` 預設單位由奈秒改為微秒，會使 `prepare_data_newHW.py` 的 `first_night_independent_discharge_wh` 少算 1000 倍。此欄位僅供人工查閱，不影響資料集、訓練與 rollout，但會讓 `git status` 顯示該 JSON 被改動。
 
 **一次跑完的最短路徑**（Windows PowerShell；Linux／macOS 把 `py` 換 `python3`、路徑分隔符換 `/`、移除行尾反引號）
 
 ```powershell
-py -m pip install torch numpy "pandas<3" pyyaml matplotlib gymnasium scipy pytest
+py -m pip install torch "numpy>=2" "pandas<3" pyyaml matplotlib gymnasium scipy pytest psutil
 New-Item -ItemType Directory -Force data\newHW\raw
 copy <來源>\Data140826.csv data\newHW\raw\Data140826.csv
 
@@ -59,14 +60,14 @@ experiments/<name>/results/in_sample_rollout_newHW/
 | 項目 | 需求 |
 |---|---|
 | Python | 已驗證 3.11.9（Windows）與 3.12.3（Linux）；其他版本未測試 |
-| 必要套件 | `torch numpy pandas<3 pyyaml matplotlib gymnasium scipy pytest` |
+| 必要套件 | `torch numpy>=2 pandas<3 pyyaml matplotlib gymnasium scipy pytest psutil` |
 | 原始資料 | `Data140826.csv`，SHA256 `9ada734a86a8aec822589d402b3ee639b62aa5fa3b7ec16025edf4af55e98881` |
 | 工作目錄 | **必須在 repository root 執行**，所有相對路徑以此為基準 |
 
 不要直接 `pip install -r requirements.txt`。該檔含 `pyinstaller`、`pvlib`、`openmeteo-requests`、`stable-baselines3`、`python-microgrid`，全部是 P302 部署或歷史流程用的，newHW 路徑一律不需要。
 
 ```powershell
-py -m pip install torch numpy "pandas<3" pyyaml matplotlib gymnasium scipy pytest
+py -m pip install torch "numpy>=2" "pandas<3" pyyaml matplotlib gymnasium scipy pytest psutil
 ```
 
 `python-microgrid` 未安裝時，執行會印出一行 `Info: python-microgrid not installed...`。**這是預期行為，不是錯誤**，newHW 環境不使用該套件。
@@ -257,6 +258,8 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 | 整份 CSV 被解析成單一欄位 | 直接讀原始 CSV 未經 prepare | 原始 header 被包成單一 quoted field，必須經 prepare 處理 |
 | `Info: python-microgrid not installed` | 選用套件未裝 | 預期行為，忽略 |
 | `Gym has been unmaintained since 2022...` | 共用模組仍觸發舊 Gym 的相依 import | 本次實測不阻擋 newHW；先記錄，不要為此修改 P302 共用檔 |
+| `AttributeError: module 'numpy' has no attribute 'trapezoid'` | 使用 NumPy < 2.0 | 升級至 `numpy>=2` 後重新執行站① |
+| `ModuleNotFoundError: No module named 'psutil'` | 套件清單漏列 `psutil` | 執行 `pip install psutil` 後重新執行站② |
 | `first_night_independent_discharge_wh` 為 `0.199` | 使用 pandas 3.x，datetime 單位由奈秒改為微秒 | 改裝 `pandas<3` 後重新執行資料準備 |
 | `Action dim: 2` | 載到 P302 環境 | 檢查 `--config` 是否指向 newHW config |
 
@@ -266,19 +269,20 @@ Box bounds 由 float64 降為 float32 的精度提醒，不是測試失敗。
 
 ### 環境
 
-| 項目 | 環境 A（Windows，本機實測） | 環境 B（Linux 容器，另一台機器實測回報） |
-|---|---|---|
-| 平台 | Windows 10 `10.0.22621`／CUDA 12.4 | Linux／CPU |
-| Python | 3.11.9 | 3.12.3 |
-| torch | 2.6.0+cu124 | 2.13.0+cu130 |
-| numpy | 2.3.2 | 2.4.4 |
-| pandas | 2.3.1 | 3.0.2（會觸發已知瑕疵） |
-| gymnasium | 1.2.0 | 1.3.0 |
-| 結果 | 全流程通過 | 全流程通過 |
+| 項目 | 環境 A（Windows，本機實測） | 環境 B（Linux 容器，另一台機器實測回報） | 環境 C（macOS，獨立重現回報） |
+|---|---|---|---|
+| 平台 | Windows 10 `10.0.22621`／CUDA 12.4 | Linux／CPU | Darwin 25.5.0／CPU |
+| Python | 3.11.9 | 3.12.3 | 3.11（patch 未記錄） |
+| torch | 2.6.0+cu124 | 2.13.0+cu130 | 2.13.0 |
+| numpy | 2.3.2 | 2.4.4 | 2.4.6 |
+| pandas | 2.3.1 | 3.0.2（會觸發已知瑕疵） | 2.3.3 |
+| gymnasium | 1.2.0 | 1.3.0 | 1.3.0 |
+| scipy | 1.16.1 | 未記錄 | 1.17.1 |
+| 結果 | 全流程通過 | 全流程通過 | 全流程通過；300 episodes 訓練 40.9 秒 |
 
 環境 A 另記錄 PyYAML 6.0.2、matplotlib 3.10.5、SciPy 1.16.1、pytest 9.0.2；
-環境 B 未提供這四項版本。Linux 欄位來自另一台機器的實測回報，未在本 Windows
-主機重建。現在僅有上述兩組較新套件組合完成全流程；較舊版本未經測試。本專案沒有
+環境 B 未提供這四項版本。Linux 與 macOS 欄位來自其他機器的獨立實測回報，未在本 Windows
+主機重建。現在僅有上述三組較新套件組合完成全流程；較舊版本未經測試。本專案沒有
 lockfile，跨機器版本差異仍可能產生類似 pandas datetime 單位變更的相容性問題。
 
 ### 實測結果
@@ -314,8 +318,8 @@ lockfile，跨機器版本差異仍可能產生類似 pandas datetime 單位變�
 
 1. `data/newHW/raw/`、processed CSV、checkpoint 與完整 experiment 都被
    `.gitignore` 排除；clone 後必須先私下取得 raw CSV，其他產物則依本頁重建。
-2. 原先套件清單漏列 rollout／上界分析所需的 `scipy`，以及步驟 6 所需的
-   `pytest`；本頁已補上。
+2. 原先套件清單漏列 rollout／上界分析所需的 `scipy`、步驟 6 所需的 `pytest`
+   與訓練必經的 `psutil`，且 NumPy 下限過低；本頁與 `requirements.txt` 已同步修正。
 3. `py` 是 Windows launcher；Linux／macOS 通常只有 `python3`，PowerShell
    的反引號續行與反斜線路徑也不能原樣複製。
 4. 同名 experiment 目錄可能混入前一次結果；重跑時應使用新的 `newHW_*`
@@ -337,21 +341,21 @@ lockfile，跨機器版本差異仍可能產生類似 pandas datetime 單位變�
 
 ## 10. 跨環境重現的已知落差
 
-同一 seed 在不同作業系統、PyTorch 版本或 CPU／GPU 上不保證位元級重現。三次已知執行的對照：
+同一 seed 在不同作業系統、PyTorch 版本或 CPU／GPU 上不保證位元級重現。四次已知執行的對照：
 
-| 指標 | 原始紀錄 | Windows／CUDA | Linux／CPU |
-|---|---:|---:|---:|
-| best served energy fraction | 52.9131% | 52.9131% | 52.9131% |
-| best SafetyNet projection | 55.85% | 55.85% | 55.85% |
-| final served energy fraction | 52.8675% | 52.3663% | 52.8675% |
-| final SafetyNet projection | 25.53% | 61.17% | 55.32% |
-| realized violations（全部） | 0 | 0 | 0 |
+| 指標 | 原始紀錄 | Windows／CUDA | Linux／CPU | macOS／CPU |
+|---|---:|---:|---:|---:|
+| best served energy fraction | 52.9131% | 52.9131% | 52.9131% | 52.9131% |
+| best SafetyNet projection | 55.85% | 55.85% | 55.85% | 55.85% |
+| final served energy fraction | 52.8675% | 52.3663% | 52.8675% | 52.8675% |
+| final SafetyNet projection | 25.53% | 61.17% | 55.32% | 46.28%（87/188） |
+| realized violations（全部） | 0 | 0 | 0 | 0 |
 
 **判讀方式**
 
-- served energy fraction 貼近 finite-window oracle 天花板，三次皆穩定；但正因為飽和，它**對上既有紀錄不構成重現證據**。
-- SafetyNet projection fraction 三次三個數字，跨環境明顯不穩定，**不應單獨作為選模依據**。
-- 出現第四個不同的 final 數字屬預期行為。如實記錄，不要調參或重跑挑結果。
+- served energy fraction 貼近 finite-window oracle 天花板，四次皆穩定；但正因為飽和，它**對上既有紀錄不構成重現證據**。
+- final SafetyNet projection fraction 四次出現四個數字，跨環境明顯不穩定，**不應單獨作為選模依據**。
+- 後續出現其他 final 數字仍屬預期行為。如實記錄，不要調參或重跑挑結果。
 
 ---
 

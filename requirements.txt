@@ -1,8 +1,11 @@
 torch>=2.0.0
-numpy>=1.21.0
+numpy>=2.0.0
 matplotlib>=3.5.0
 # pandas 3.x to_datetime defaults to microseconds; newHW preparation assumes nanoseconds.
 pandas<3
+scipy
+pytest
+psutil
 pvlib
 openmeteo-requests
 requests
