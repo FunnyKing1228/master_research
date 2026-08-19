@@ -17,7 +17,7 @@ powershell -ExecutionPolicy Bypass -File .\_deploy.ps1
 建置前先核對 checkpoint、封存 experiment config、source 狀態與 [release manifest](../docs/handover/release_manifest.md)。目前正式來源位置如下：
 
 - GUI source：`gui/ai_control_gui.py`
-- 控制 source：`control/run_deployment.py`、`control/io_protocol.py`
+- 控制 source：`control/run_deployment.py`、`control/io_protocol.py`；人員版協定說明見 [`../control/README.md`](../control/README.md)
 - PyInstaller spec：`packaging/build_release.spec`
 - 建置入口：`_deploy.ps1`
 - 暫存 onedir：`dist/P302_AI_GUI/`

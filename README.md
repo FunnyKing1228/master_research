@@ -17,7 +17,7 @@
 1. [資料準備](data/README.md)
 2. [模型訓練](core/README.md)
 3. [實驗與跨日驗證](experiments/README.md)
-4. [部署與 GUI 打包](packaging/README.md)
+4. [部署與 GUI 打包](packaging/README.md)；[Data.txt／Command.txt 協定](control/README.md)
 5. [現場 CSV 與繪圖](tools/plotting_handoff/README.md)
 
 每個區域另有 `README_AI.md`，記錄 source map、限制、驗證方式與已知技術債。
